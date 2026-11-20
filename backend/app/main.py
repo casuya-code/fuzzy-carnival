@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import CORS_ALLOW_ORIGINS, CORS_ORIGIN_REGEX, TEMP_AUDIO_DIR
-from app.routers import captions, packaging, storage, synthesize, text, video
+from app.routers import captions, packaging, storage, synthesize, text, timeline, video
 from app.schemas.tts import HealthResponse
 
 
@@ -38,6 +38,7 @@ app.include_router(text.router)
 app.include_router(video.router)
 app.include_router(captions.router)
 app.include_router(packaging.router)
+app.include_router(timeline.router)
 
 # Serve locally generated files when R2 is not configured (dev fallback).
 # Directory is created once in app.config.

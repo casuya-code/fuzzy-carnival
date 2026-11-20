@@ -42,6 +42,7 @@ class AfriSpeechPocketEngine(BaseTTSEngine):
         text: str,
         reference_audio_path=None,
         output_path=None,
+        speaking_rate=None,
     ) -> str:
         self.ensure_loaded()
         import scipy.io.wavfile

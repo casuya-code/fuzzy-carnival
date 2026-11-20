@@ -11,7 +11,13 @@ interface Props {
 }
 
 const MAX_SECONDS = 15;
-const MIN_SECONDS = 3; // backend enforces 3s; UI encourages 5-15s
+const MIN_SECONDS = 3;
+
+function qualityLabel(score: number) {
+  if (score >= 80) return { text: "Good", cls: "text-green-700 bg-green-50 border-green-200" };
+  if (score >= 55) return { text: "Fair", cls: "text-amber-700 bg-amber-50 border-amber-200" };
+  return { text: "Needs improvement", cls: "text-red-700 bg-red-50 border-red-200" };
+}
 
 export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDenoiseChange }: Props) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -32,7 +38,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [done, setDone] = useState(false);
-  const [level, setLevel] = useState(0); // 0..1 mic level
+  const [level, setLevel] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ReferenceAnalysis | null>(null);
 
@@ -70,7 +76,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
           sum += v * v;
         }
         const rms = Math.sqrt(sum / data.length);
-        setLevel(Math.min(1, rms * 4)); // scale up for visibility
+        setLevel(Math.min(1, rms * 4));
         rafRef.current = requestAnimationFrame(tick);
       };
       tick();
@@ -114,7 +120,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
         setSeconds(secondsRef.current);
       }, 1000);
     } catch (e: any) {
-      if (mountedRef.current) setError(e?.message || "Microphone access denied");
+      if (mountedRef.current) setError(e?.message || "Microphone access was denied. Please allow microphone access and try again.");
     }
   };
 
@@ -158,7 +164,6 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
       if (!mountedRef.current) return;
       onUploaded(key);
       setDone(true);
-      // Non-blocking quality analysis (backend converts non-WAV first).
       try {
         const a = await analyzeAudio(key);
         if (mountedRef.current) setAnalysis(a);
@@ -167,7 +172,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
       }
     } catch (e: any) {
       if (mountedRef.current) {
-        setError(e?.message || "Upload failed");
+        setError(e?.message || "Upload failed. Please try again.");
         setDone(false);
       }
     } finally {
@@ -193,111 +198,114 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
   };
 
   const progress = Math.min((seconds / MAX_SECONDS) * 100, 100);
-
-  const status = recording ? "recording" : uploading ? "uploading" : done && voiceKey ? "ready" : "idle";
+  const hasVoice = !!voiceKey;
+  const statusLabel = recording ? "Recording" : uploading ? "Uploading" : hasVoice && done ? "Ready" : hasVoice ? "Saved" : "Not added";
 
   return (
     <section className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm space-y-4">
-      <div className="flex items-center justify-between gap-2 border-b pb-2">
-        <h3 className="text-base sm:text-lg font-semibold">① Reference Voice</h3>
-        <div className="flex items-center gap-2">
-          <span className={`rounded-full px-2.5 py-0.5 text-xs font-mono ${
-            status === "ready" ? "bg-green-50 text-green-700" : status === "recording" ? "bg-red-50 text-red-700" : status === "uploading" ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-600"
-          }`}>state = {status}</span>
-          {voiceKey && !recording && !uploading && (
-            <button onClick={clearVoice} className="text-xs text-gray-500 underline hover:text-gray-700">
-              Clear
+      <div className="flex items-start justify-between gap-3 border-b pb-3">
+        <div>
+          <h3 className="text-base sm:text-lg font-semibold">Step 1: Add a voice sample</h3>
+          <p className="mt-1 text-sm text-gray-600">
+            Optional for some voices. Record or upload 10–15 seconds of clear speech if you want the app to copy that voice.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+            statusLabel === "Ready" || statusLabel === "Saved"
+              ? "bg-green-50 text-green-700"
+              : statusLabel === "Recording"
+                ? "bg-red-50 text-red-700"
+                : statusLabel === "Uploading"
+                  ? "bg-amber-50 text-amber-700"
+                  : "bg-gray-100 text-gray-600"
+          }`}>
+            {statusLabel}
+          </span>
+          {hasVoice && !recording && !uploading && (
+            <button onClick={clearVoice} className="text-xs sm:text-sm text-gray-600 underline hover:text-gray-800">
+              Remove
             </button>
           )}
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="min-w-full text-xs sm:text-sm">
-          <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
-            <tr>
-              <th className="px-3 py-2 text-left font-semibold">Param</th>
-              <th className="px-3 py-2 text-left font-semibold">Value</th>
-              <th className="px-3 py-2 text-left font-semibold hidden sm:table-cell">Note</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            <tr className="bg-white">
-              <td className="px-3 py-2 font-mono text-gray-500">ref</td>
-              <td className="px-3 py-2 font-mono tabular-nums">{voiceKey ? "1 (set)" : "0 (none)"}</td>
-              <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">Saved reference key used for cloning</td>
-            </tr>
-            <tr className="bg-gray-50/40">
-              <td className="px-3 py-2 font-mono text-gray-500">denoise</td>
-              <td className="px-3 py-2 font-mono">{denoiseRef ? "1 (on)" : "0 (off)"}</td>
-              <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">Background noise reduction</td>
-            </tr>
-            <tr className="bg-white">
-              <td className="px-3 py-2 font-mono text-gray-500">t</td>
-              <td className="px-3 py-2 font-mono tabular-nums">{seconds}s / {MAX_SECONDS}s</td>
-              <td className="px-3 py-2 text-gray-500 hidden sm:table-cell">Recommended 10–15s (min {MIN_SECONDS}s)</td>
-            </tr>
-          </tbody>
-        </table>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+        <div className="rounded-lg border bg-gray-50/60 px-3 py-2">
+          <div className="text-xs uppercase tracking-wide text-gray-500">Voice sample</div>
+          <div className={`mt-0.5 font-medium ${hasVoice ? "text-green-700" : "text-gray-800"}`}>{hasVoice ? "Added" : "Not added"}</div>
+        </div>
+        <div className="rounded-lg border bg-gray-50/60 px-3 py-2">
+          <div className="text-xs uppercase tracking-wide text-gray-500">Noise cleanup</div>
+          <div className="mt-0.5 font-medium text-gray-800">{denoiseRef ? "On" : "Off"}</div>
+        </div>
+        <div className="rounded-lg border bg-gray-50/60 px-3 py-2">
+          <div className="text-xs uppercase tracking-wide text-gray-500">Recording time</div>
+          <div className="mt-0.5 font-medium text-gray-800">{seconds}s <span className="text-gray-500 font-normal">(aim for 10–15s)</span></div>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={() => setMode("record")}
-          className={`rounded-md border px-3 py-2 text-xs sm:text-sm font-medium transition ${mode === "record" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+          className={`rounded-lg border px-3 py-2.5 text-sm font-medium transition ${mode === "record" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
         >
-          🎤 Record
+          Record with microphone
         </button>
         <button
           type="button"
           onClick={() => setMode("upload")}
-          className={`rounded-md border px-3 py-2 text-xs sm:text-sm font-medium transition ${mode === "upload" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+          className={`rounded-lg border px-3 py-2.5 text-sm font-medium transition ${mode === "upload" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
         >
-          📁 Upload file
+          Upload audio file
         </button>
       </div>
 
       {mode === "record" ? (
-        <div className="space-y-3 rounded-lg border bg-gray-50/40 p-3">
+        <div className="space-y-3 rounded-lg border bg-gray-50/40 p-3 sm:p-4">
           <div className="flex flex-wrap items-center gap-3">
             {!recording ? (
               <button
                 onClick={start}
                 disabled={uploading}
-                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
+                className="rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
               >
-                {uploading ? "Uploading…" : done ? "Re-record" : "Start Recording"}
+                {uploading ? "Uploading..." : done ? "Record again" : "Start recording"}
               </button>
             ) : (
               <button
                 onClick={stop}
-                className="rounded-md bg-gray-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-900"
+                className="rounded-lg bg-gray-800 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-gray-900"
               >
-                ⏹ Stop ({seconds}s)
+                Stop recording ({seconds}s)
               </button>
             )}
             {recording && (
-              <div className="flex-1 min-w-[160px]">
-                <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+              <div className="flex-1 min-w-[180px]">
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-200">
                   <div
                     className={`h-full rounded-full transition-all duration-1000 ease-linear ${seconds >= MAX_SECONDS - 3 ? "bg-red-500" : "bg-blue-500"}`}
                     style={{ width: `${progress}%` }}
                   />
                 </div>
-                <div className="mt-1 flex justify-between text-[10px] font-mono text-gray-400">
-                  <span>{seconds}s</span><span>{MAX_SECONDS}s</span>
+                <div className="mt-1 flex justify-between text-xs text-gray-500">
+                  <span>{seconds}s</span><span>Auto-stops at {MAX_SECONDS}s</span>
                 </div>
               </div>
             )}
           </div>
+
           {recording && (
-            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[11px] font-mono text-gray-500">
-              <span>level</span>
-              <div className="h-1.5 overflow-hidden rounded-full bg-gray-200">
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-xs text-gray-600">
+                <span>Microphone level</span>
+                <span>{level < 0.05 ? "Very quiet" : level > 0.85 ? "Too loud" : "Good"}</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-gray-200">
                 <div className="h-full rounded-full bg-green-500 transition-all duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
               </div>
-              <span className="tabular-nums">{level < 0.05 ? "low" : level > 0.85 ? "high" : "ok"} ({Math.round(level * 100)}%)</span>
+              <p className="text-xs text-gray-500">Speak clearly in a quiet room, at a steady distance from the microphone.</p>
             </div>
           )}
         </div>
@@ -318,28 +326,25 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="w-full rounded-lg border-2 border-dashed border-gray-300 p-4 text-sm text-gray-600 transition hover:border-blue-400 hover:bg-blue-50 disabled:opacity-50"
+            className="w-full rounded-lg border-2 border-dashed border-gray-300 p-5 text-sm text-gray-700 transition hover:border-blue-400 hover:bg-blue-50 disabled:opacity-50"
           >
-            {uploading ? "Uploading…" : "Click to choose an audio file (WAV, MP3, WebM, M4A…)"}
+            {uploading ? "Uploading..." : "Click to choose an audio file (WAV, MP3, WebM, M4A...)"}
           </button>
-          <p className="text-[11px] text-gray-400 font-mono">tip: upload one master clip and reuse for series consistency.</p>
+          <p className="text-xs text-gray-500">Tip: Use the same voice sample for a series to keep the voice consistent.</p>
         </div>
       )}
 
-      {error && <p className="rounded-md bg-red-50 border border-red-100 p-2 text-sm text-red-700">{error}</p>}
+      {error && <p className="rounded-md bg-red-50 border border-red-100 p-3 text-sm text-red-700">{error}</p>}
 
       {analysis && (
-        <div className="rounded-md border border-blue-100 bg-blue-50 p-2.5 text-[11px] text-blue-900 space-y-1">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono">
-            <span className="font-semibold">quality {Math.round(analysis.quality_score)}/100</span>
-            <span>rms {analysis.rms.toFixed(3)}</span>
-            <span>peak {analysis.peak.toFixed(3)}</span>
-            <span>crest {analysis.crest_db.toFixed(1)} dB</span>
-            {analysis.snr_db != null && <span>snr {analysis.snr_db.toFixed(1)} dB</span>}
-            {analysis.clipping && <span className="text-red-700 font-semibold">⚠ clipping</span>}
+        <div className={`rounded-lg border p-3 space-y-2 ${qualityLabel(analysis.quality_score).cls}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-sm">Sound quality: {qualityLabel(analysis.quality_score).text}</span>
+            <span className="text-xs opacity-80">({Math.round(analysis.quality_score)}/100)</span>
+            {analysis.clipping && <span className="text-xs font-medium">Audio may be too loud (clipping)</span>}
           </div>
           {analysis.hints.length > 0 && (
-            <ul className="list-disc pl-4 space-y-0.5">
+            <ul className="list-disc pl-5 space-y-1 text-sm">
               {analysis.hints.slice(0, 3).map((hint, i) => <li key={i}>{hint}</li>)}
             </ul>
           )}
@@ -349,45 +354,43 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
       {previewUrl && (
         <div className="rounded-lg border bg-gray-50 p-3 space-y-2">
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-[11px] font-medium text-gray-600">Preview reference (energy / clarity / pacing)</p>
-            <a href={previewUrl} download="reference-voice.webm" className="text-[11px] text-blue-600 hover:underline shrink-0">
-              ⬇ Save reference
+            <p className="text-sm font-medium text-gray-700">Listen to your sample</p>
+            <a href={previewUrl} download="voice-sample.webm" className="text-sm text-blue-600 hover:underline shrink-0">
+              Save sample
             </a>
           </div>
-          <audio controls src={previewUrl} className="w-full h-8" />
-          <p className="text-[10px] text-gray-400">Reuse the same master reference to keep identity consistent.</p>
+          <audio controls src={previewUrl} className="w-full h-9" />
+          <p className="text-xs text-gray-500">If it sounds unclear, too quiet, or noisy, record again for better results.</p>
         </div>
       )}
 
-      <label className="flex items-center gap-2 text-xs sm:text-sm text-gray-700 cursor-pointer select-none rounded-lg border p-2.5 bg-white">
-        <input type="checkbox" checked={denoiseRef} onChange={(e) => onDenoiseChange(e.target.checked)} />
+      <label className="flex items-start gap-2.5 text-sm text-gray-700 cursor-pointer select-none rounded-lg border p-3 bg-white">
+        <input type="checkbox" className="mt-0.5" checked={denoiseRef} onChange={(e) => onDenoiseChange(e.target.checked)} />
         <span>
-          <span className="font-medium">Remove background noise</span> <span className="text-gray-400 font-mono">(denoise = {denoiseRef ? "1" : "0"})</span> — recommended for clean, stable cloning
+          <span className="font-medium">Clean up background noise</span>
+          <span className="block text-xs text-gray-500 mt-0.5">Recommended for clearer, more stable voice copying.</span>
         </span>
       </label>
 
-      <div className="text-xs space-y-2">
+      <div className="text-sm space-y-2">
         {recording && (
-          <p className="text-blue-600 font-medium">🎤 Recording… match the energy you want in output. Auto-stops at {MAX_SECONDS}s.</p>
+          <p className="text-blue-700 font-medium">Recording... Speak naturally, with the same energy you want in the final audio.</p>
         )}
-        {uploading && <p className="text-amber-600 font-medium">⬆️ Uploading reference clip…</p>}
-        {done && voiceKey && (
-          <div className="space-y-1 rounded-md bg-green-50 border border-green-100 p-2">
-            <p className="text-green-700 font-medium">
-              ✅ Voice ready — {denoiseRef ? "noise-reduced, " : ""}trimmed & normalized for stable cloning.
-            </p>
-            <p className="text-amber-700">If energy/clarity/pacing is off, re-record — a weak sample becomes a weak series.</p>
+        {uploading && <p className="text-amber-700 font-medium">Uploading your voice sample...</p>}
+        {done && hasVoice && !recording && !uploading && (
+          <div className="space-y-1 rounded-lg bg-green-50 border border-green-100 p-3">
+            <p className="text-green-700 font-medium">Voice sample ready.</p>
+            <p className="text-gray-700 text-sm">You can use this sample with voices that copy your voice. For best results, use a clear 10–15 second recording.</p>
           </div>
         )}
         {!recording && !uploading && !done && (
-          <div className="text-gray-600 space-y-1">
-            <p>10–15s recommended (min {MIN_SECONDS}s) of natural sentences. Clone copies rhythm, emotion, artifacts — not just timbre.</p>
-            <ul className="list-disc pl-4 space-y-0.5 text-gray-500">
-              <li><strong>One voice only</strong>, clear audio, minimal noise.</li>
-              <li>Quiet room, steady mic distance, no background music/hum.</li>
-              <li>Match target energy (upbeat teacher, calm narrator, etc.).</li>
-              <li>Use one “master” reference for the series.</li>
-              <li>Don’t whisper unless you want a whispery clone.</li>
+          <div className="text-gray-700 space-y-1.5">
+            <p className="font-medium">Tips for a good voice sample</p>
+            <ul className="list-disc pl-5 space-y-1 text-gray-600">
+              <li>Record <strong>10–15 seconds</strong> of natural speech (at least {MIN_SECONDS}s).</li>
+              <li>Use <strong>one voice only</strong> in a quiet place.</li>
+              <li>Keep the microphone at a steady distance and avoid background music/noise.</li>
+              <li>Speak with the energy/style you want copied (calm, lively, etc.).</li>
             </ul>
           </div>
         )}

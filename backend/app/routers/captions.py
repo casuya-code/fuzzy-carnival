@@ -90,6 +90,8 @@ async def captions_burn(
     words_per_chunk: int = Form(DEFAULT_WORDS_PER_CHUNK),
     topic: str = Form("Untitled"),
     language: str = Form("en"),
+    upscale_2k: bool = Form(False),
+    loudnorm: bool = Form(False),
 ):
     """Generate a word-by-word ASS file and burn it onto an existing video.
 
@@ -143,7 +145,14 @@ async def captions_burn(
             aspect_ratio=aspect_ratio,
             words_per_chunk=words_per_chunk,
         )
-        burn_captions_onto_video(video_path, ass_path, final_path)
+        burn_captions_onto_video(
+            video_path,
+            ass_path,
+            final_path,
+            aspect_ratio=aspect_ratio,
+            upscale_2k=upscale_2k,
+            loudnorm=loudnorm,
+        )
 
         r2_key = build_video_r2_key("Video_Captioned", language, topic, "mp4")
         url = upload_output(final_path, r2_key)

@@ -75,10 +75,30 @@ ENABLE_KYUTAI = os.getenv("ENABLE_KYUTAI", "true").lower() == "true"
 ENABLE_AFRISPEECH = os.getenv("ENABLE_AFRISPEECH", "true").lower() == "true"
 ENABLE_MSINGI = os.getenv("ENABLE_MSINGI", "true").lower() == "true"
 ENABLE_MMS = os.getenv("ENABLE_MMS", "true").lower() == "true"
+ENABLE_AZURE = os.getenv("ENABLE_AZURE", "true").lower() == "true"
+ENABLE_ELEVENLABS = os.getenv("ENABLE_ELEVENLABS", "true").lower() == "true"
 KYUTAI_WARM = os.getenv("KYUTAI_WARM", "true").lower() == "true"
 WARM_MMS = os.getenv("WARM_MMS", "true").lower() == "true"
 
-ENGINE_NAMES = ("kyutai", "afrispeech", "msingi", "mms")
+# Swahili MMS checkpoint. Any VITS/MMS-shaped repo with its own tokenizer works.
+# Benchmarked on a 4-sentence Swahili passage (voiced% / peak):
+#   facebook/mms-tts-swh                          68% / 0.73  (default, most balanced)
+#   stano03/jambogpt-swahili-tts-v1               74% / 0.80  (Apache-2.0, crisper)
+#   mussacharles60/swahili-tts-female-voice       77% / 0.82  (MIT, female voice)
+MMS_MODEL_ID = os.getenv("MMS_MODEL_ID", "facebook/mms-tts-swh")
+
+ENGINE_NAMES = ("kyutai", "afrispeech", "msingi", "mms", "azure", "elevenlabs")
+
+# --- Cloud TTS (Azure Speech / ElevenLabs) ---------------------------------------
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "southafricanorth")
+AZURE_SWAHILI_VOICE = os.getenv("AZURE_SWAHILI_VOICE", "sw-TZ-DaudiNeural")
+AZURE_ENGLISH_VOICE = os.getenv("AZURE_ENGLISH_VOICE", "en-US-AriaNeural")
+
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
+ELEVENLABS_DEFAULT_VOICE_ID = os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "nPczCjzI2devNBz1zQrb")
+ELEVENLABS_ENABLE_CLONING = os.getenv("ELEVENLABS_ENABLE_CLONING", "false").lower() == "true"
 
 # --- Audio processing -------------------------------------------------------------
 DENOISE_REFERENCE = os.getenv("DENOISE_REFERENCE", "true").lower() == "true"
@@ -97,3 +117,12 @@ MAX_TRIM_END_SEC = 5.0
 DEFAULT_CLIP_LENGTH_SEC = int(os.getenv("DEFAULT_CLIP_LENGTH_SEC", "40"))
 MIN_CLIP_LENGTH_SEC = 5
 MAX_CLIP_LENGTH_SEC = 180
+
+# --- Social-ready video export defaults ------------------------------------------
+# Balanced for YouTube / Instagram / Facebook after platform re-compression.
+SOCIAL_VIDEO_CRF = int(os.getenv("SOCIAL_VIDEO_CRF", "22"))
+SOCIAL_VIDEO_PRESET = os.getenv("SOCIAL_VIDEO_PRESET", "veryfast")
+SOCIAL_AUDIO_BITRATE = os.getenv("SOCIAL_AUDIO_BITRATE", "160k")
+SOCIAL_AUDIO_RATE = int(os.getenv("SOCIAL_AUDIO_RATE", "44100"))
+SOCIAL_MAXRATE = os.getenv("SOCIAL_MAXRATE", "12M")
+SOCIAL_BUFSIZE = os.getenv("SOCIAL_BUFSIZE", "24M")

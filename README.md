@@ -5,12 +5,37 @@ Clone voices in **English** and **Swahili** using four TTS engines, deployed on
 
 ## Engines
 
-| Engine | Language | Cloning | RAM |
-|---|---|---|---|
-| Kyutai Pocket TTS | English | Zero-shot | ~1 GB |
-| AfriSpeech (Pocket TTS) | English (African accent) | Zero-shot | ~1 GB |
-| Msingi-AI Sauti (XTTS-v2) | Swahili | Zero-shot | ~3.5 GB |
-| Meta MMS-TTS | Swahili | No (fallback) | ~0.5 GB |
+| Engine option | Best use case | Cost / quota (typical) | RAM on Railway | Cloning | Notes |
+|---|---|---|---|---|---|
+| **Azure AI Speech** (`azure`, sw-TZ Daudi/Rehema) | Default Swahili storytelling, documentaries, narration | F0: 500k chars/mo free (plan-dependent) | 0 MB (cloud REST) | No (preset neural voices) | Auto-falls back to MMS on HTTP 429 quota/rate limit; commercial rights per Azure terms |
+| **Kyutai Pocket TTS** (`kyutai`) | Unlimited English custom voice cloning from short sample | Included in your container | ~1.0 GB (CPU) | Zero-shot | Local/open weights |
+| **ElevenLabs** (`elevenlabs`) | Dramatic character voices & short hooks (EN/SW accents) | Free tier limited (plan-dependent); paid unlocks more | 0 MB (cloud REST) | Preset voice, or IVC when `ELEVENLABS_ENABLE_CLONING=true` and your plan allows it | Uses `eleven_flash_v2_5` by default to stretch quota |
+| **Msingi-AI Sauti / XTTS-v2** (`msingi`) | Self-hosted Swahili voice cloning (when cloud unavailable/quota used) | Included in your container | ~3.5 GB (loaded on demand) | Zero-shot | Uses base XTTS-v2 unless `MSINGI_CHECKPOINT_PATH` points to a fine-tuned checkpoint. Base XTTS has no `sw` token, so Swahili uses a safe tokenizer fallback with a UI warning |
+| **Meta MMS-TTS** (`mms`) | Offline/low-cost Swahili fallback | Included in your container | ~0.5 GB | No | Sentence/chunked delivery with punctuation-aware breaths + adjustable pace; checkpoint swappable via `MMS_MODEL_ID` |
+
+**Routing & safety rules**
+- Text is normalized before synthesis (Swahili uses `kiswahili-text-normalizer` when available, custom loanwords from `backend/app/data/swahili_loanwords.json` or `SWAHILI_LOANWORDS_PATH`, then number/punctuation normalization). Raw text should be used for captions.
+- If `azure` returns HTTP 429, the backend automatically falls back to `mms` for that request and returns a UI warning.
+- `msingi` auto-detects the loaded checkpoint's languages. Stock XTTS-v2 does not include Swahili (`sw`), so it uses a supported tokenizer token (normally `en`) while still cloning your sample, and returns a UI warning. Point `MSINGI_CHECKPOINT_PATH` at a Swahili-aware checkpoint to use the native `sw` token; `MSINGI_LANGUAGE=auto` is the default and can be overridden in `backend/.env`.
+- `COQUI_TOS_AGREED=1` is set automatically for unattended/server use; make sure your Coqui/XTTS/CPML usage complies with the applicable license terms.
+- Cloud engines run over HTTPS and do not load PyTorch/XTTS weights into RAM (zero local model RAM for Azure/ElevenLabs).
+
+**Swahili delivery (pauses, breaths, pace)**
+- Meta MMS-TTS is a single-pass VITS vocoder: it reads straight through a paragraph with no natural breaths. The backend compensates by splitting long text at sentence/clause boundaries, synthesizing each segment, then stitching silence that follows the punctuation:
+  - `.` → 480 ms, `!` → 500 ms, `?` → 560 ms (a real breath)
+  - `,` → 180 ms, `;` → 240 ms, `:` → 260 ms (a short catch)
+  - long segments also break at commas so a 60-word sentence never becomes a sprint
+- **`speaking_rate`** (request field + "Speaking pace" slider, 0.7–1.4) maps to VITS `speaking_rate`: `<1.0` slower/more deliberate, `>1.0` faster. Verified 17.7 s at 0.8 vs 12.2 s at 1.2 on the same text.
+- Swahili text without a trailing `.` is force-terminated, and `;`/`:` are rewritten, so passages don't run on.
+- **Swap the checkpoint** with `MMS_MODEL_ID` (any VITS/MMS repo with its own tokenizer). Benchmarked on a 4-sentence Swahili passage:
+
+  | `MMS_MODEL_ID` | Voiced | Peak | License |
+  |---|---|---|---|
+  | `facebook/mms-tts-swh` (default) | 68% | 0.73 | CC-BY-NC |
+  | `stano03/jambogpt-swahili-tts-v1` | 74% | 0.80 | Apache-2.0 |
+  | `mussacharles60/swahili-tts-female-voice` | 77% | 0.82 | MIT |
+
+  Weights are cached per model under `backend/weights/mms/<model>/`, so switching never mixes checkpoints.
 
 ## Architecture
 
@@ -112,12 +137,16 @@ uvicorn app.main:app --reload --port 8000
 3. `railway init` (create project)
 4. `railway up` (deploys using Dockerfile)
 5. Set environment variables in Railway dashboard (from `.env.example`),
-   including `HF_TOKEN`, R2 credentials, `ALLOWED_ORIGINS` (your Vercel URL).
+   including `HF_TOKEN`, R2 credentials, `ALLOWED_ORIGINS` (your Vercel URL),
+   and (optional but recommended for premium Swahili quality) cloud TTS keys:
+   `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, `AZURE_SWAHILI_VOICE`,
+   `ELEVENLABS_API_KEY`, `ELEVENLABS_MODEL_ID`, `ELEVENLABS_DEFAULT_VOICE_ID`,
+   `ELEVENLABS_ENABLE_CLONING`.
 6. Railway will use `railway.toml` for healthcheck (`/health`) and restart
    policy. **Sleep mode** is enabled (`sleepApplication = true`) so the
    service sleeps when idle and wakes on the next request — saving the $5
    budget. The frontend header pings the backend `/health` endpoint to report
-   wake-up status.
+   wake-up status. Cloud engines (Azure/ElevenLabs) keep local RAM usage near-zero.
 
 ### Pre-fetch weights (optional, recommended for faster cold starts)
 
@@ -150,9 +179,11 @@ Set env vars in Vercel dashboard: `R2_*` and `NEXT_PUBLIC_RAILWAY_API_URL`.
 ## 4. Usage
 
 1. Open the Vercel app.
-2. Record a 10–15s clean, single-speaker reference clip (denoise is on by default).
-3. Pick language (🇬🇧 English / 🇹🇿 Swahili) and engine (`FLUENT (EN)` / `AFRICA (EN)`).
-4. Type text, generate speech, then preview/save or render a speed+gain export.
+2. Record a 10–15s clean, single-speaker reference clip (denoise is on by default) for local cloning engines that need it.
+3. Pick language (🇬🇧 English / 🇹🇿 Swahili) and engine:
+   - **Swahili:** Azure AI Speech (default/premium neural) · Msingi/XTTS (self-hosted clone) · MMS (fallback) · ElevenLabs (hooks/character)
+   - **English:** Kyutai/Fluent (clone) · AfriSpeech (accent clone) · ElevenLabs (hooks/character)
+4. Type text (normalized for TTS automatically; keep raw script for captions), generate speech, then preview/save or render a speed+gain export. If Azure quota is exceeded, the app falls back to MMS and shows a warning.
 5. In **Speech-and-Background**, stack the voice with ambient (L2) and/or music
    (L3), apply a preset, and export a mastered track (also saved to history).
 6. In **Trimming & Zooming**, add ordered clips, set trim/aspect, pick the unified

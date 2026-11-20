@@ -11,6 +11,15 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageStat
 
+from app.config import (
+    SOCIAL_AUDIO_BITRATE,
+    SOCIAL_AUDIO_RATE,
+    SOCIAL_BUFSIZE,
+    SOCIAL_MAXRATE,
+    SOCIAL_VIDEO_CRF,
+    SOCIAL_VIDEO_PRESET,
+)
+
 ACCENTS = {
     "yellow": (255, 215, 0),
     "red": (235, 45, 45),
@@ -239,12 +248,24 @@ def export_three_vertical_shorts(
             "-map", "[out]",
         ]
         if audio:
-            cmd += ["-map", "0:a:0", "-c:a", "aac", "-b:a", "128k"]
+            cmd += [
+                "-map", "0:a:0",
+                "-c:a", "aac",
+                "-b:a", SOCIAL_AUDIO_BITRATE,
+                "-ar", str(SOCIAL_AUDIO_RATE),
+            ]
         else:
             cmd += ["-an"]
         cmd += [
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-maxrate", "3.5M", "-bufsize", "7M",
+            "-c:v", "libx264",
+            "-preset", SOCIAL_VIDEO_PRESET,
+            "-crf", str(SOCIAL_VIDEO_CRF),
+            "-maxrate", SOCIAL_MAXRATE,
+            "-bufsize", SOCIAL_BUFSIZE,
+            "-pix_fmt", "yuv420p",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
             "-movflags", "+faststart",
             out_path,
         ]
@@ -256,3 +277,55 @@ def export_three_vertical_shorts(
             pass
 
     return short_paths
+
+
+def reexport_master_video(
+    input_path: str,
+    output_path: str,
+    upscale_2k: bool = False,
+    loudnorm: bool = False,
+) -> str:
+    """Re-export a master video with social-ready encoding and optional 2K upscale/loudness normalization."""
+    vf_parts = []
+    if upscale_2k:
+        # YouTube-oriented 16:9 2K master
+        vf_parts.append("scale=2560:1440:force_original_aspect_ratio=decrease")
+        vf_parts.append("pad=2560:1440:(ow-iw)/2:(oh-ih)/2:black")
+    vf_parts.append("format=yuv420p")
+
+    has_audio = _has_audio(input_path)
+    cmd = [
+        "ffmpeg", "-nostdin", "-y",
+        "-i", input_path,
+        "-map", "0:v:0",
+    ]
+    if has_audio:
+        cmd += ["-map", "0:a:0"]
+    cmd += [
+        "-vf", ",".join(vf_parts),
+        "-c:v", "libx264",
+        "-preset", SOCIAL_VIDEO_PRESET,
+        "-crf", str(SOCIAL_VIDEO_CRF),
+        "-maxrate", SOCIAL_MAXRATE,
+        "-bufsize", SOCIAL_BUFSIZE,
+        "-pix_fmt", "yuv420p",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+    ]
+    if has_audio:
+        if loudnorm:
+            cmd += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
+        cmd += [
+            "-c:a", "aac",
+            "-b:a", SOCIAL_AUDIO_BITRATE,
+            "-ar", str(SOCIAL_AUDIO_RATE),
+        ]
+    else:
+        cmd += ["-an"]
+    cmd += [
+        "-movflags", "+faststart",
+        output_path,
+    ]
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    return output_path

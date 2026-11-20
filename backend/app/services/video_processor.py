@@ -2,11 +2,19 @@ import os
 import subprocess
 from pathlib import Path
 
-from app.config import DEFAULT_TRIM_END_SEC
+from app.config import (
+    DEFAULT_TRIM_END_SEC,
+    SOCIAL_AUDIO_BITRATE,
+    SOCIAL_AUDIO_RATE,
+    SOCIAL_BUFSIZE,
+    SOCIAL_MAXRATE,
+    SOCIAL_VIDEO_CRF,
+    SOCIAL_VIDEO_PRESET,
+)
 from app.services.audio_processor import get_duration
 from app.services.captions_processor import DEFAULT_ASPECT_RATIO, SAFE_ZONES, ass_filter_arg
 
-__all__ = ["get_duration", "trim_and_zoom_clip", "stitch_clips_with_audio"]
+__all__ = ["get_duration", "trim_and_zoom_clip", "stitch_clips_with_audio", "stitch_silent_clips"]
 
 
 def trim_and_zoom_clip(
@@ -49,10 +57,14 @@ def trim_and_zoom_clip(
         "-vf", vf_filter,
         "-an",  # Strip silent AI video audio track
         "-c:v", "libx264",
-        "-preset", "ultrafast",  # Fast CPU rendering
-        "-crf", "23",
-        "-maxrate", "4M",
-        "-bufsize", "8M",
+        "-preset", SOCIAL_VIDEO_PRESET,
+        "-crf", str(SOCIAL_VIDEO_CRF),
+        "-maxrate", SOCIAL_MAXRATE,
+        "-bufsize", SOCIAL_BUFSIZE,
+        "-pix_fmt", "yuv420p",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
         "-movflags", "+faststart",
         output_path,
     ]
@@ -61,11 +73,28 @@ def trim_and_zoom_clip(
     return output_path
 
 
+def _upscale_dims(aspect_ratio: str | None, upscale_2k: bool) -> tuple[int, int] | None:
+    if not upscale_2k:
+        return None
+    ar = (aspect_ratio or DEFAULT_ASPECT_RATIO)
+    if ar == "16:9":
+        return (2560, 1440)
+    if ar == "9:16":
+        return (1440, 2560)
+    if ar == "1:1":
+        return (1440, 1440)
+    zone = SAFE_ZONES.get(ar, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
+    return (zone["w"], zone["h"])
+
+
 def stitch_clips_with_audio(
     processed_clips: list[str],
     unified_audio_path: str,
     final_output_path: str,
     ass_path: str | None = None,
+    aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    upscale_2k: bool = False,
+    loudnorm: bool = False,
 ) -> str:
     """
     Concatenates all trimmed & zoomed clips and attaches the mixed voiceover + music.
@@ -93,8 +122,16 @@ def stitch_clips_with_audio(
         ], cwd=work_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
         # Step 2: Combine stitched video with unified audio track.
-        # With captions we must re-encode video once (libass), done here in the
-        # same pass as the mux; otherwise we can stream-copy the video.
+        # With captions/upscale we must re-encode video; audio can be loudness-normalized.
+        upscale_dims = _upscale_dims(aspect_ratio, upscale_2k)
+        vf_parts: list[str] = []
+        if ass_path:
+            vf_parts.append(ass_filter_arg(ass_path, working_dir=work_dir))
+        if upscale_dims:
+            vf_parts.append(f"scale={upscale_dims[0]}:{upscale_dims[1]}:flags=lanczos")
+        vf_parts.append("format=yuv420p")
+        must_encode_video = bool(ass_path or upscale_dims)
+
         cmd = [
             "ffmpeg", "-nostdin", "-y",
             "-stream_loop", "-1", "-i", stitched_silent,
@@ -102,16 +139,29 @@ def stitch_clips_with_audio(
             "-map", "0:v:0",
             "-map", "1:a:0",
         ]
-        if ass_path:
-            cmd += ["-vf", ass_filter_arg(ass_path, working_dir=work_dir),
-                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-                    "-maxrate", "4M", "-bufsize", "8M",
-                    "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart"]
+        if must_encode_video:
+            cmd += [
+                "-vf", ",".join(vf_parts),
+                "-c:v", "libx264",
+                "-preset", SOCIAL_VIDEO_PRESET,
+                "-crf", str(SOCIAL_VIDEO_CRF),
+                "-maxrate", SOCIAL_MAXRATE,
+                "-bufsize", SOCIAL_BUFSIZE,
+                "-pix_fmt", "yuv420p",
+                "-colorspace", "bt709",
+                "-color_primaries", "bt709",
+                "-color_trc", "bt709",
+            ]
         else:
-            cmd += ["-c:v", "copy", "-movflags", "+faststart"]
+            cmd += ["-c:v", "copy"]
+
+        if loudnorm:
+            cmd += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
+
         cmd += [
-            "-c:a", "aac", "-b:a", "128k",
+            "-c:a", "aac",
+            "-b:a", SOCIAL_AUDIO_BITRATE,
+            "-ar", str(SOCIAL_AUDIO_RATE),
             "-movflags", "+faststart",
             "-shortest",  # Stops when audio (voiceover + outro) finishes
             final_output_path,
@@ -123,5 +173,35 @@ def stitch_clips_with_audio(
                 Path(p).unlink(missing_ok=True)
             except Exception:
                 pass
+
+    return final_output_path
+
+
+def stitch_silent_clips(processed_clips: list[str], final_output_path: str) -> str:
+    """Concatenate trimmed/zoomed clips into one silent intermediate video (stream-copy)."""
+    if not processed_clips:
+        raise ValueError("At least one processed clip is required")
+
+    work_dir = str(Path(final_output_path).parent)
+    concat_list_path = str(Path(final_output_path).with_suffix(".txt"))
+    with open(concat_list_path, "w", encoding="utf-8") as f:
+        for clip in processed_clips:
+            safe = os.path.abspath(clip).replace("\\", "/")
+            f.write(f"file '{safe}'\n")
+
+    try:
+        subprocess.run([
+            "ffmpeg", "-nostdin", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_list_path,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            final_output_path,
+        ], cwd=work_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    finally:
+        try:
+            Path(concat_list_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     return final_output_path

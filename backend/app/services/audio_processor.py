@@ -529,11 +529,15 @@ def stitch_audio_with_pauses(
     chunks: list[str],
     output_path: str,
     pause_ms: int = 400,
+    gaps_ms: list[int] | None = None,
 ) -> str:
     """Concatenate audio chunks with a silence gap between them.
 
     Used for engines (e.g. MMS-TTS) that do not insert natural breaths, so
     long Swahili passages get audible pauses between sentences.
+
+    ``gaps_ms`` optionally gives a per-boundary duration (len == len(chunks)-1)
+    so pauses can follow punctuation: short at commas, long at sentence ends.
     """
     if not chunks:
         raise ValueError("No audio chunks to stitch")
@@ -545,14 +549,15 @@ def stitch_audio_with_pauses(
 
     rate, first = wavfile.read(chunks[0])
     arrays = [np.asarray(first)]
-    gap = np.zeros(int(rate * pause_ms / 1000.0), dtype=first.dtype)
-    for c in chunks[1:]:
+    for i, c in enumerate(chunks[1:]):
         _, data = wavfile.read(c)
         data = np.asarray(data)
         if data.dtype != first.dtype:
             data = data.astype(first.dtype)
         if data.ndim != first.ndim:
             data = data.reshape(-1) if first.ndim == 1 else data
+        this_pause = gaps_ms[i] if gaps_ms and i < len(gaps_ms) else pause_ms
+        gap = np.zeros(int(rate * this_pause / 1000.0), dtype=first.dtype)
         arrays.append(gap)
         arrays.append(data)
     wavfile.write(output_path, rate, np.concatenate(arrays))

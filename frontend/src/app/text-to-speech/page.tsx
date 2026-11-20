@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { Engine, SynthesizeResponse, SynthesizeRequest, checkHealth, warmEngine } from "@/lib/api";
-import { addSpeechHistory, removeSpeechHistory } from "@/lib/history";
+import { addSpeechHistory, loadSpeechHistory, removeSpeechHistory } from "@/lib/history";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import EngineSelector from "@/components/EngineSelector";
 import TextToSpeechForm from "@/components/TextToSpeechForm";
 import AudioPlayer from "@/components/AudioPlayer";
+import SpeechTimelineSidebar from "@/components/SpeechTimelineSidebar";
 
 export default function TextToSpeechPage() {
   const [language, setLanguage] = useState<"en" | "sw">("en");
@@ -16,15 +17,30 @@ export default function TextToSpeechPage() {
   const [result, setResult] = useState<SynthesizeResponse | null>(null);
   const [history, setHistory] = useState<SynthesizeResponse[]>([]);
   const [backendStatus, setBackendStatus] = useState<"checking" | "awake" | "sleeping">("checking");
-  const [loadedModels, setLoadedModels] = useState<string[]>([]);
   const [lastReq, setLastReq] = useState<SynthesizeRequest | null>(null);
 
-  // Restore saved preferences after mount
+  // Restore saved preferences and recent speech history after mount
   useEffect(() => {
     const saved = localStorage.getItem("voiceKey");
     if (saved) setVoiceKey(saved);
     const dn = localStorage.getItem("denoiseRef");
     if (dn !== null) setDenoiseRef(dn === "true");
+
+    try {
+      const savedSpeech = loadSpeechHistory().map((s) => ({
+        audio_r2_key: s.audio_r2_key,
+        audio_url: s.audio_url,
+        engine_used: s.engine_used || "unknown",
+        duration_seconds: s.duration_seconds,
+        source_text: s.source_text,
+        timeline: s.timeline,
+        timeline_source: s.timeline_source,
+      })) as SynthesizeResponse[];
+      if (savedSpeech.length > 0) {
+        setHistory(savedSpeech.slice(0, 8));
+        setResult((cur) => cur ?? savedSpeech[0]);
+      }
+    } catch {}
   }, []);
 
   const handleVoice = (key: string | null) => {
@@ -39,15 +55,22 @@ export default function TextToSpeechPage() {
   };
 
   const handleResult = (res: SynthesizeResponse, req: SynthesizeRequest) => {
-    setResult(res);
+    const enriched: SynthesizeResponse = {
+      ...res,
+      source_text: res.source_text || req.text,
+    };
+    setResult(enriched);
     setLastReq(req);
-    setHistory((prev) => [res, ...prev.filter((r) => r.audio_url !== res.audio_url)].slice(0, 8));
-    // Persist to shared speech history for the Speech-and-Background page
+    setHistory((prev) => [enriched, ...prev.filter((r) => r.audio_url !== enriched.audio_url)].slice(0, 8));
+    // Persist to shared speech history for other pages and timeline reuse
     addSpeechHistory({
-      audio_r2_key: res.audio_r2_key,
-      audio_url: res.audio_url,
-      engine_used: res.engine_used,
-      duration_seconds: res.duration_seconds,
+      audio_r2_key: enriched.audio_r2_key,
+      audio_url: enriched.audio_url,
+      engine_used: enriched.engine_used,
+      duration_seconds: enriched.duration_seconds,
+      source_text: enriched.source_text || undefined,
+      timeline: enriched.timeline || undefined,
+      timeline_source: enriched.timeline_source || undefined,
     });
   };
 
@@ -60,15 +83,29 @@ export default function TextToSpeechPage() {
     removeSpeechHistory(url);
   };
 
+  const handleSelectHistory = (item: SynthesizeResponse) => {
+    setResult(item);
+    if (item.source_text) {
+      setLastReq({
+        text: item.source_text,
+        language,
+        engine,
+        voice_r2_key: voiceKey,
+        denoise_ref: denoiseRef,
+      });
+    } else {
+      setLastReq(null);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     const ping = async () => {
       setBackendStatus("checking");
       try {
-        const h = await checkHealth();
+        await checkHealth();
         if (!cancelled) {
           setBackendStatus("awake");
-          setLoadedModels(h.loaded_models || []);
         }
       } catch {
         if (!cancelled) setBackendStatus("sleeping");
@@ -88,25 +125,35 @@ export default function TextToSpeechPage() {
   }, [engine]);
 
   const engineLabel: Record<Engine, string> = {
-    kyutai: "FLUENT (EN)",
-    afrispeech: "AFRICA (EN)",
-    msingi: "Msingi-AI Sauti (SW)",
-    mms: "Meta MMS-TTS (SW)",
+    kyutai: "English Voice Clone",
+    afrispeech: "English (African Accent)",
+    msingi: "Swahili Voice Clone",
+    mms: "Swahili (Basic Voice)",
+    azure: "Swahili Natural Voice",
+    elevenlabs: "Expressive Voice (Online)",
   };
+
+  const statusText =
+    backendStatus === "awake"
+      ? "Online and ready"
+      : backendStatus === "checking"
+        ? "Checking connection..."
+        : "Waking up (first request may take a little longer)";
 
   return (
     <div className="space-y-6 pb-10">
-      <header className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <header className="rounded-xl border bg-white p-4 sm:p-6 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">🎙️ Text-to-Speech</h1>
-            <p className="mt-1 text-sm text-gray-600">
-              Clone and synthesize speech with structured parameters and noise-controlled references.
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">🎙️ Text to Speech</h1>
+            <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-2xl">
+              Turn your text into natural speech in English or Swahili. Add a voice sample to copy a voice (for supported options),
+              choose a voice, then create and download your audio.
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-xs shadow-sm self-start">
+          <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-xs sm:text-sm shadow-sm self-start">
             <span
-              className={`inline-block h-2 w-2 rounded-full ${
+              className={`inline-block h-2.5 w-2.5 rounded-full ${
                 backendStatus === "awake"
                   ? "bg-green-500"
                   : backendStatus === "sleeping"
@@ -114,66 +161,92 @@ export default function TextToSpeechPage() {
                     : "bg-gray-400 animate-pulse"
               }`}
             />
-            {backendStatus === "awake" && <span className="text-green-700 font-medium">Backend awake</span>}
-            {backendStatus === "checking" && <span className="text-gray-500">Checking…</span>}
-            {backendStatus === "sleeping" && (
-              <span className="text-amber-700">Sleeping — first request wakes it</span>
-            )}
+            <span
+              className={
+                backendStatus === "awake"
+                  ? "text-green-700 font-medium"
+                  : backendStatus === "sleeping"
+                    ? "text-amber-700"
+                    : "text-gray-500"
+              }
+            >
+              {statusText}
+            </span>
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+        <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "Language", value: language === "en" ? "EN" : "SW" },
-            { label: "Engine", value: engineLabel[engine] },
-            { label: "Voice ref", value: voiceKey ? "ready" : "none" },
-            { label: "Denoise", value: denoiseRef ? "on" : "off" },
+            { label: "Language", value: language === "en" ? "English" : "Swahili" },
+            { label: "Voice", value: engineLabel[engine] },
+            { label: "Your voice sample", value: voiceKey ? "Added" : "Not added" },
+            { label: "Noise cleanup", value: denoiseRef ? "On" : "Off" },
           ].map((m) => (
-            <div key={m.label} className="rounded-lg border bg-gradient-to-b from-gray-50 to-white px-2 py-2 min-w-0">
-              <div className="text-[10px] uppercase tracking-wide text-gray-400">{m.label}</div>
-              <div className="text-xs sm:text-sm font-semibold font-mono text-gray-800 tabular-nums truncate" title={String(m.value)}>
+            <div key={m.label} className="rounded-lg border bg-gray-50/60 px-3 py-2.5 min-w-0">
+              <div className="text-[11px] uppercase tracking-wide text-gray-500">{m.label}</div>
+              <div className="mt-0.5 text-sm font-semibold text-gray-800 truncate" title={String(m.value)}>
                 {m.value}
               </div>
             </div>
           ))}
         </div>
+
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+          {["1. Add voice sample (optional)", "2. Choose a voice", "3. Create speech"].map((s) => (
+            <div key={s} className="rounded-lg border border-blue-100 bg-blue-50/40 px-3 py-2 text-blue-900 font-medium">
+              {s}
+            </div>
+          ))}
+        </div>
       </header>
 
-      <div className="grid grid-cols-3 gap-2 text-center">
-        {["1 · Voice", "2 · Engine", "3 · Generate"].map((s, i) => (
-          <div key={s} className="rounded-lg border bg-white px-2 py-2 text-[10px] sm:text-xs font-bold uppercase tracking-wide text-gray-500">
-            <span className="font-mono text-gray-400 mr-1">[{i + 1}]</span>{s.replace(/^\d · /, "")}
+      <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="grid gap-6 xl:grid-cols-2 min-w-0">
+          <div className="space-y-6 min-w-0">
+            <VoiceRecorder
+              onUploaded={handleVoice}
+              voiceKey={voiceKey}
+              denoiseRef={denoiseRef}
+              onDenoiseChange={handleDenoiseChange}
+            />
+            <EngineSelector engine={engine} onChange={setEngine} language={language} />
           </div>
-        ))}
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <div className="space-y-6 min-w-0">
-          <VoiceRecorder
-            onUploaded={handleVoice}
-            voiceKey={voiceKey}
-            denoiseRef={denoiseRef}
-            onDenoiseChange={handleDenoiseChange}
-          />
-          <EngineSelector engine={engine} onChange={setEngine} language={language} />
+          <div className="space-y-6 min-w-0">
+            <TextToSpeechForm
+              language={language}
+              setLanguage={setLanguage}
+              engine={engine}
+              setEngine={setEngine}
+              voiceKey={voiceKey}
+              denoiseRef={denoiseRef}
+              onResult={handleResult}
+            />
+            <AudioPlayer
+              result={result}
+              history={history}
+              onSelect={handleSelectHistory}
+              lastReq={lastReq}
+              onRegenerated={handleResult}
+              onRemove={handleRemoveHistory}
+            />
+          </div>
         </div>
-        <div className="space-y-6 min-w-0">
-          <TextToSpeechForm
-            language={language}
-            setLanguage={setLanguage}
-            engine={engine}
-            setEngine={setEngine}
-            voiceKey={voiceKey}
-            denoiseRef={denoiseRef}
-            onResult={handleResult}
-          />
-          <AudioPlayer
-            result={result}
-            history={history}
-            onSelect={setResult}
-            lastReq={lastReq}
-            onRegenerated={handleResult}
-            onRemove={handleRemoveHistory}
+
+        <div className="min-w-0 2xl:sticky 2xl:top-4 self-start">
+          <SpeechTimelineSidebar
+            audioUrl={result?.audio_url}
+            audioKey={result?.audio_r2_key}
+            sourceText={result?.source_text || lastReq?.text || null}
+            initialTimeline={result?.timeline || null}
+            initialSource={result?.timeline_source || null}
+            onTimelineChange={(timeline, source) => {
+              setResult((cur) => (cur ? { ...cur, timeline, timeline_source: source } : cur));
+              setHistory((prev) =>
+                prev.map((h) =>
+                  h.audio_url === result?.audio_url ? { ...h, timeline, timeline_source: source } : h
+                )
+              );
+            }}
           />
         </div>
       </div>

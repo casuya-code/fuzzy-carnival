@@ -3,7 +3,7 @@ export const API_BASE = (
   process.env.NEXT_PUBLIC_RAILWAY_API_URL || "http://127.0.0.1:8000"
 ).replace(/\/+$/, "");
 
-export type Engine = "kyutai" | "afrispeech" | "msingi" | "mms";
+export type Engine = "kyutai" | "afrispeech" | "msingi" | "mms" | "azure" | "elevenlabs";
 
 export interface SynthesizeRequest {
   text: string;
@@ -13,6 +13,16 @@ export interface SynthesizeRequest {
   topic?: string;
   skip_cache?: boolean;
   denoise_ref?: boolean;
+  /** Delivery pace: <1 slower, >1 faster (VITS engines only). */
+  speaking_rate?: number;
+}
+
+export interface TimelineSegment {
+  id: number;
+  start: number;
+  end: number;
+  duration: number;
+  text: string;
 }
 
 export interface SynthesizeResponse {
@@ -20,6 +30,10 @@ export interface SynthesizeResponse {
   audio_url: string;
   engine_used: string;
   duration_seconds?: number;
+  warning?: string;
+  timeline?: TimelineSegment[] | null;
+  timeline_source?: "provider" | "alignment" | "estimated" | "unavailable" | string | null;
+  source_text?: string | null;
 }
 
 export interface HealthResponse {
@@ -216,6 +230,8 @@ export async function burnCaptions(payload: {
   words_per_chunk: number;
   topic?: string;
   language?: string;
+  upscale_2k?: boolean;
+  loudnorm?: boolean;
 }): Promise<{
   video_r2_key?: string;
   video_url: string;
@@ -238,6 +254,8 @@ export async function burnCaptions(payload: {
   fd.append("words_per_chunk", String(payload.words_per_chunk));
   if (payload.topic) fd.append("topic", payload.topic);
   if (payload.language) fd.append("language", payload.language);
+  if (payload.upscale_2k != null) fd.append("upscale_2k", String(payload.upscale_2k));
+  if (payload.loudnorm != null) fd.append("loudnorm", String(payload.loudnorm));
   const res = await fetch(`${API_BASE}/api/v1/captions/burn`, { method: "POST", body: fd });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
@@ -255,6 +273,78 @@ export interface VideoProcessResult {
   chunk_count?: number;
 }
 
+export interface VideoBatchResult {
+  video_r2_key: string;
+  video_url: string;
+  duration_seconds?: number;
+  clips_processed?: number;
+  intermediate?: boolean;
+}
+
+export async function processVideoBatch(payload: {
+  clips: File[];
+  aspect_ratio: string;
+  trim_end_sec: number;
+  topic?: string;
+  language?: string;
+}): Promise<VideoBatchResult> {
+  const fd = new FormData();
+  payload.clips.forEach((c) => fd.append("clips", c, c.name));
+  fd.append("aspect_ratio", payload.aspect_ratio);
+  fd.append("trim_end_sec", String(payload.trim_end_sec));
+  if (payload.topic) fd.append("topic", payload.topic);
+  if (payload.language) fd.append("language", payload.language);
+  const res = await fetch(`${API_BASE}/api/v1/video/process-batch`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    const detail = extractDetail(await res.text());
+    throw new Error(detail || `Video batch processing failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function finalizeVideo(payload: {
+  video_r2_keys: string[];
+  audio?: File | null;
+  audio_r2_key?: string | null;
+  aspect_ratio: string;
+  topic?: string;
+  language?: string;
+  script_text?: string;
+  intro_delay_sec?: number;
+  outro_sec?: number;
+  words_per_chunk?: number;
+  upscale_2k?: boolean;
+  loudnorm?: boolean;
+}): Promise<VideoProcessResult> {
+  const fd = new FormData();
+  fd.append("video_r2_keys", JSON.stringify(payload.video_r2_keys));
+  if (payload.audio) fd.append("audio", payload.audio, payload.audio.name);
+  if (payload.audio_r2_key) fd.append("audio_r2_key", payload.audio_r2_key);
+  fd.append("aspect_ratio", payload.aspect_ratio);
+  if (payload.topic) fd.append("topic", payload.topic);
+  if (payload.language) fd.append("language", payload.language);
+  if (payload.script_text) {
+    fd.append("script_text", payload.script_text);
+    if (payload.intro_delay_sec != null) fd.append("intro_delay_sec", String(payload.intro_delay_sec));
+    if (payload.outro_sec != null) fd.append("outro_sec", String(payload.outro_sec));
+    if (payload.words_per_chunk != null) fd.append("words_per_chunk", String(payload.words_per_chunk));
+  }
+  if (payload.upscale_2k != null) fd.append("upscale_2k", String(payload.upscale_2k));
+  if (payload.loudnorm != null) fd.append("loudnorm", String(payload.loudnorm));
+  const res = await fetch(`${API_BASE}/api/v1/video/finalize`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    const detail = extractDetail(await res.text());
+    throw new Error(detail || `Video finalize failed (${res.status})`);
+  }
+  return res.json();
+}
+
 export async function processVideo(payload: {
   clips: File[];
   audio?: File | null;
@@ -267,6 +357,8 @@ export async function processVideo(payload: {
   intro_delay_sec?: number;
   outro_sec?: number;
   words_per_chunk?: number;
+  upscale_2k?: boolean;
+  loudnorm?: boolean;
 }): Promise<VideoProcessResult> {
   const fd = new FormData();
   payload.clips.forEach((c) => fd.append("clips", c, c.name));
@@ -288,6 +380,8 @@ export async function processVideo(payload: {
       fd.append("words_per_chunk", String(payload.words_per_chunk));
     }
   }
+  if (payload.upscale_2k != null) fd.append("upscale_2k", String(payload.upscale_2k));
+  if (payload.loudnorm != null) fd.append("loudnorm", String(payload.loudnorm));
   const res = await fetch(`${API_BASE}/api/v1/video/process`, {
     method: "POST",
     body: fd,
@@ -309,6 +403,8 @@ export async function processCaptionedVideo(payload: {
   aspect_ratio: string;
   words_per_chunk: number;
   trim_end_sec: number;
+  upscale_2k?: boolean;
+  loudnorm?: boolean;
 }): Promise<VideoProcessResult> {
   return processVideo(payload);
 }
@@ -371,6 +467,8 @@ export async function publishPackage(payload: {
   phases: string[];
   topic?: string;
   language?: string;
+  upscale_2k?: boolean;
+  loudnorm?: boolean;
 }): Promise<PackageResult> {
   const fd = new FormData();
   if (payload.master_video) fd.append("master_video", payload.master_video, payload.master_video.name);
@@ -385,6 +483,8 @@ export async function publishPackage(payload: {
   fd.append("phases", payload.phases.join(","));
   if (payload.topic) fd.append("topic", payload.topic);
   if (payload.language) fd.append("language", payload.language);
+  if (payload.upscale_2k != null) fd.append("upscale_2k", String(payload.upscale_2k));
+  if (payload.loudnorm != null) fd.append("loudnorm", String(payload.loudnorm));
   const res = await fetch(`${API_BASE}/api/v1/packaging/publish`, { method: "POST", body: fd });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
@@ -427,6 +527,28 @@ export async function analyzeAudio(key: string): Promise<ReferenceAnalysis> {
   if (!res.ok) {
     const detail = extractDetail(await res.text());
     throw new Error(detail || `Analyze failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function buildSpeechTimeline(payload: {
+  audio_r2_key: string;
+  text: string;
+  prefer_alignment?: boolean;
+}): Promise<{
+  timeline: TimelineSegment[];
+  timeline_source: "alignment" | "estimated" | "unavailable" | string;
+  duration_seconds?: number;
+  warning?: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/v1/timeline`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const detail = extractDetail(await res.text());
+    throw new Error(detail || `Timeline generation failed (${res.status})`);
   }
   return res.json();
 }

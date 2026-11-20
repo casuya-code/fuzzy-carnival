@@ -1,4 +1,7 @@
+import json
+import os
 import re
+from pathlib import Path
 
 _SW_DIGITS = {
     "0": "sifuri", "1": "moja", "2": "mbili", "3": "tatu", "4": "nne",
@@ -10,6 +13,49 @@ _SW_TENS = {
     "50": "hamsini", "60": "sitini", "70": "sabini", "80": "themanini",
     "90": "tisini", "100": "mia", "1000": "elfu",
 }
+
+_LOANWORDS: dict[str, str] | None = None
+
+
+def _load_loanwords() -> dict[str, str]:
+    global _LOANWORDS
+    if _LOANWORDS is not None:
+        return _LOANWORDS
+    _LOANWORDS = {}
+    # Custom loanword/pronunciation dictionary for Swahili TTS (e.g. {"AI": "A I", "YouTube": "Yutubu"})
+    candidates = []
+    env_path = os.getenv("SWAHILI_LOANWORDS_PATH", "").strip()
+    if env_path:
+        candidates.append(Path(env_path))
+    base = Path(__file__).resolve().parents[1]
+    candidates.append(base / "data" / "swahili_loanwords.json")
+    for p in candidates:
+        try:
+            if p.exists():
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    _LOANWORDS = {str(k): str(v) for k, v in data.items()}
+                break
+        except Exception:
+            continue
+    return _LOANWORDS
+
+
+def _apply_loanwords(text: str) -> str:
+    mapping = _load_loanwords()
+    if not mapping:
+        return text
+    # Longer keys first to avoid partial overlaps
+    for src in sorted(mapping.keys(), key=len, reverse=True):
+        dst = mapping[src]
+        if not src:
+            continue
+        try:
+            pattern = r"\b" + re.escape(src) + r"\b"
+            text = re.sub(pattern, dst, text, flags=re.IGNORECASE)
+        except Exception:
+            text = text.replace(src, dst)
+    return text
 
 
 def _en_number_to_words(n: int) -> str:
@@ -64,6 +110,8 @@ def normalize_text(text: str, language: str = "en") -> str:
             text = sw_normalize(text, profile="tts")
         except Exception:
             pass
+        # Apply custom loanword/pronunciation dictionary
+        text = _apply_loanwords(text)
     # Normalize numbers (fallback / English)
     text = normalize_numbers(text, language)
     # Collapse whitespace

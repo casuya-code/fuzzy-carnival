@@ -32,6 +32,8 @@ export default function PublishPackagePage() {
   const [thumb, setThumb] = useState<{ url: string; key: string } | null>(null);
   const [thumbLoading, setThumbLoading] = useState(false);
   const [thumbError, setThumbError] = useState<string | null>(null);
+  const [upscale2k, setUpscale2k] = useState(false);
+  const [loudnorm, setLoudnorm] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PackageResult | null>(null);
@@ -120,6 +122,8 @@ export default function PublishPackagePage() {
         start_times: starts,
         phases,
         topic, language,
+        upscale_2k: upscale2k,
+        loudnorm,
       });
       setResult(r);
       addDeliverable({ kind: "package", title: `Published package (${r.shorts.length} shorts)`, url: r.master_url, r2_key: r.master.r2_key, meta: { thumbnail_url: r.thumbnail_url, short_urls: r.short_urls, duration_seconds: r.duration_seconds } });
@@ -137,17 +141,11 @@ export default function PublishPackagePage() {
   return (
     <div className="space-y-6 pb-10">
       <header className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">📦 Publish Package</h1>
-            <p className="mt-1 max-w-2xl text-sm text-gray-600">
-              Replace manual Canva + CapCut work: auto-design a click-worthy YouTube thumbnail and
-              slice 3 retention-focused 9:16 Shorts from your master film — 5 ready-to-post files.
-            </p>
-          </div>
-          <div className="font-mono text-[11px] text-gray-500 bg-gray-50 border rounded px-3 py-2 overflow-x-auto">
-            P = {'{'} M₁₆:₉ , T = argmax_sharp(F) ⊕ grad ⊕ hook , Sᵢ = crop(M, tᵢ, Δ) {'}'}
-          </div>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">📦 Ready to Post</h1>
+          <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-3xl">
+            Create a thumbnail and short vertical clips from your finished video so it’s ready to share.
+          </p>
         </div>
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
           {[
@@ -316,6 +314,24 @@ export default function PublishPackagePage() {
             <div className="flex items-center justify-between gap-2 border-b pb-2">
               <h2 className="text-base sm:text-lg font-semibold">④ Package manifest</h2>
               <span className="text-[11px] font-mono text-gray-400">5 files → R2</span>
+            </div>
+
+            <div className="rounded-lg border p-3 space-y-2">
+              <div className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Master export options</div>
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+                <input type="checkbox" checked={loudnorm} onChange={(e) => setLoudnorm(e.target.checked)} className="mt-0.5" />
+                <span>
+                  <span className="font-medium">Normalize loudness</span>
+                  <span className="block text-xs text-gray-500">Balance audio for social playback before packaging (recommended).</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+                <input type="checkbox" checked={upscale2k} onChange={(e) => setUpscale2k(e.target.checked)} className="mt-0.5" />
+                <span>
+                  <span className="font-medium">YouTube 2K master upscale</span>
+                  <span className="block text-xs text-gray-500">Export the 16:9 master at 2560×1440 for sharper YouTube delivery. Slower to process.</span>
+                </span>
+              </label>
             </div>
             <div className="overflow-x-auto rounded-lg border">
               <table className="min-w-full text-xs sm:text-sm">

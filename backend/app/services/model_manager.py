@@ -7,10 +7,10 @@ Railway $5 container stays under its RAM budget.
 import gc
 import threading
 
-import torch
-
 from app.config import (
     ENABLE_AFRISPEECH,
+    ENABLE_AZURE,
+    ENABLE_ELEVENLABS,
     ENABLE_KYUTAI,
     ENABLE_MMS,
     ENABLE_MSINGI,
@@ -20,10 +20,14 @@ from app.config import (
     WARM_MMS,
 )
 from app.engines.afrispeech_pocket import AfriSpeechPocketEngine
+from app.engines.azure_swahili import AzureSwahiliEngine
 from app.engines.base import BaseTTSEngine
+from app.engines.elevenlabs import ElevenLabsEngine
 from app.engines.kyutai_pocket import KyutaiPocketEngine
 from app.engines.mms_swahili_fallback import MmsSwahiliFallbackEngine
 from app.engines.msingi_sauti import MsingiSautiEngine
+
+CLOUD_ENGINES = {"azure", "elevenlabs"}
 
 
 class ModelManager:
@@ -33,6 +37,8 @@ class ModelManager:
             "afrispeech": (AfriSpeechPocketEngine, ENABLE_AFRISPEECH),
             "msingi": (MsingiSautiEngine, ENABLE_MSINGI),
             "mms": (MmsSwahiliFallbackEngine, ENABLE_MMS),
+            "azure": (AzureSwahiliEngine, ENABLE_AZURE),
+            "elevenlabs": (ElevenLabsEngine, ENABLE_ELEVENLABS),
         }
         self.engines: dict[str, BaseTTSEngine] = {
             name: factory() for name, (factory, enabled) in factories.items() if enabled
@@ -51,10 +57,11 @@ class ModelManager:
                 raise ValueError(f"Unknown engine: {name}")
             engine = self.engines[name]
 
-            # If requesting a heavy model, unload others to free RAM
-            if engine.ram_gb >= self._heavy_ram_gb:
+            # Cloud engines use 0 local RAM; never evict local models for them.
+            # If requesting a heavy local model, unload other local engines to free RAM.
+            if name not in CLOUD_ENGINES and engine.ram_gb >= self._heavy_ram_gb:
                 for other_name in list(self._loaded):
-                    if other_name != name:
+                    if other_name != name and other_name not in CLOUD_ENGINES:
                         self._unload(other_name)
 
             engine.ensure_loaded()
@@ -85,7 +92,10 @@ class ModelManager:
             pass
         self._loaded.discard(name)
         gc.collect()
+        # Best-effort CUDA cleanup only when torch is available (local GPU setups).
         try:
+            import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:

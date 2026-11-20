@@ -10,7 +10,16 @@ import re
 import subprocess
 from pathlib import Path
 
-from app.config import DEFAULT_INTRO_SEC, MAX_WORDS_PER_CHUNK
+from app.config import (
+    DEFAULT_INTRO_SEC,
+    MAX_WORDS_PER_CHUNK,
+    SOCIAL_AUDIO_BITRATE,
+    SOCIAL_AUDIO_RATE,
+    SOCIAL_BUFSIZE,
+    SOCIAL_MAXRATE,
+    SOCIAL_VIDEO_CRF,
+    SOCIAL_VIDEO_PRESET,
+)
 
 # Safe-zone presets (PlayRes + margins). For 9:16 the bottom ~380-450px are
 # covered by platform UI and the right ~150px by like/share buttons, so captions
@@ -168,29 +177,80 @@ def ass_filter_arg(ass_path: str, working_dir: str | None = None) -> str:
     return f"ass='{name}'"
 
 
+def _upscale_dims(aspect_ratio: str | None, upscale_2k: bool) -> tuple[int, int] | None:
+    if not upscale_2k:
+        return None
+    ar = aspect_ratio or DEFAULT_ASPECT_RATIO
+    if ar == "16:9":
+        return (2560, 1440)
+    if ar == "9:16":
+        return (1440, 2560)
+    if ar == "1:1":
+        return (1440, 1440)
+    zone = SAFE_ZONES.get(ar, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
+    return (zone["w"], zone["h"])
+
+
 def burn_captions_onto_video(
     input_video_path: str,
     ass_path: str,
     output_video_path: str,
+    aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    upscale_2k: bool = False,
+    loudnorm: bool = False,
 ) -> str:
-    """Burn the .ass file into the video with libass; stream-copy the audio."""
+    """Burn the .ass file into the video with libass and export social-ready audio/video."""
     in_abs = os.path.abspath(input_video_path)
     out_abs = os.path.abspath(output_video_path)
     ass_abs = os.path.abspath(ass_path)
     work_dir = os.path.dirname(ass_abs)
-    vf = ass_filter_arg(ass_abs, working_dir=work_dir)
+
+    vf_parts = [ass_filter_arg(ass_abs, working_dir=work_dir)]
+    dims = _upscale_dims(aspect_ratio, upscale_2k)
+    if dims:
+        vf_parts.append(f"scale={dims[0]}:{dims[1]}:flags=lanczos")
+    vf_parts.append("format=yuv420p")
+
+    # Detect audio stream to avoid failing on silent videos.
+    has_audio = False
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", in_abs],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        has_audio = bool(probe.stdout.strip())
+    except Exception:
+        has_audio = True
+
     cmd = [
         "ffmpeg", "-nostdin", "-y",
         "-i", in_abs,
-        "-vf", vf,
+        "-vf", ",".join(vf_parts),
         "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "23",
-        "-maxrate", "4M",
-        "-bufsize", "8M",
+        "-preset", SOCIAL_VIDEO_PRESET,
+        "-crf", str(SOCIAL_VIDEO_CRF),
+        "-maxrate", SOCIAL_MAXRATE,
+        "-bufsize", SOCIAL_BUFSIZE,
         "-pix_fmt", "yuv420p",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+    ]
+    if has_audio:
+        if loudnorm:
+            cmd += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
+        cmd += [
+            "-c:a", "aac",
+            "-b:a", SOCIAL_AUDIO_BITRATE,
+            "-ar", str(SOCIAL_AUDIO_RATE),
+        ]
+    else:
+        cmd += ["-an"]
+    cmd += [
         "-movflags", "+faststart",
-        "-c:a", "copy",
         out_abs,
     ]
     subprocess.run(cmd, cwd=work_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)

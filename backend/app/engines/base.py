@@ -32,8 +32,13 @@ class BaseTTSEngine(ABC):
         text: str,
         reference_audio_path: Optional[str] = None,
         output_path: Optional[str] = None,
+        speaking_rate: Optional[float] = None,
     ) -> str:
-        """Synthesize speech and return path to output audio file."""
+        """Synthesize speech and return path to output audio file.
+
+        `speaking_rate` is an optional delivery-speed hint (1.0 = neutral).
+        Engines that cannot control pace simply ignore it.
+        """
         ...
 
     def ensure_loaded(self) -> None:

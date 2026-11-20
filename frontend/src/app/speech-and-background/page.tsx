@@ -372,18 +372,12 @@ export default function SpeechAndBackgroundPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      {/* Header + layer model */}
       <header className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">🎵 Speech &amp; Background</h1>
-            <p className="mt-1 text-sm text-gray-600">
-              3-layer audio stack: cloned voiceover, ambient texture, and auto-ducked music bed.
-            </p>
-          </div>
-          <div className="font-mono text-[11px] text-gray-500 bg-gray-50 border rounded px-3 py-2 overflow-x-auto">
-            out = loudnorm(L1 ⊕ L2·v₂ ⊕ duck(L3·v₃, L1), −16 LUFS) + t<sub>in</sub>/t<sub>out</sub>
-          </div>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">🎵 Add Music &amp; Sounds</h1>
+          <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-3xl">
+            Mix your voice with background sounds and music. Keep your voice clear and choose how loud each extra track should be.
+          </p>
         </div>
 
         <div className="mt-4 overflow-x-auto rounded-lg border">

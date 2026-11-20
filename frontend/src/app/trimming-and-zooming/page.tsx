@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { processVideo, VideoProcessResult } from "@/lib/api";
+import { finalizeVideo, processVideo, processVideoBatch, VideoProcessResult } from "@/lib/api";
 import { fmtSize } from "@/lib/format";
 import { addDeliverable, addVideoHistory, loadSpeechHistory, SpeechHistoryItem } from "@/lib/history";
 import { createObjectUrlRegistry } from "@/lib/objectUrls";
@@ -20,7 +20,10 @@ export default function TrimmingAndZoomingPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioHistory, setAudioHistory] = useState<SpeechHistoryItem[]>([]);
   const [selectedAudioUrl, setSelectedAudioUrl] = useState<string>("");
+  const [upscale2k, setUpscale2k] = useState(false);
+  const [loudnorm, setLoudnorm] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VideoProcessResult | null>(null);
   const [clipUrls] = useState(createObjectUrlRegistry);
@@ -72,6 +75,7 @@ export default function TrimmingAndZoomingPage() {
   const process = async () => {
     setError(null);
     setResult(null);
+    setProgress(null);
     if (clips.length === 0) { setError("Add at least one video clip."); return; }
 
     let audioPayload: { file?: File; key?: string } = {};
@@ -84,24 +88,67 @@ export default function TrimmingAndZoomingPage() {
       audioPayload.key = sel.audio_r2_key;
     }
 
+    const topic = (typeof window !== "undefined" && localStorage.getItem("projectTopic")) || "Untitled";
+    const language = "en";
+    const files = clips.map((c) => c.file);
+
     setProcessing(true);
     try {
-      const data = await processVideo({
-        clips: clips.map((c) => c.file),
-        audio: audioPayload.file,
-        audio_r2_key: audioPayload.key,
-        aspect_ratio: aspectRatio,
-        trim_end_sec: trimEndSec,
-        topic: (typeof window !== "undefined" && localStorage.getItem("projectTopic")) || "Untitled",
-        language: "en",
-      });
+      let data: VideoProcessResult;
+
+      // For larger jobs, split into smaller batch requests to avoid upload/timeouts and reduce failure risk.
+      const BATCH_SIZE = 5;
+      if (files.length > BATCH_SIZE) {
+        const batchKeys: string[] = [];
+        const totalBatches = Math.ceil(files.length / BATCH_SIZE);
+        for (let b = 0; b < totalBatches; b++) {
+          const start = b * BATCH_SIZE;
+          const batchFiles = files.slice(start, start + BATCH_SIZE);
+          setProgress(`Processing clips ${start + 1}-${Math.min(start + batchFiles.length, files.length)} of ${files.length} (batch ${b + 1}/${totalBatches})…`);
+          const batch = await processVideoBatch({
+            clips: batchFiles,
+            aspect_ratio: aspectRatio,
+            trim_end_sec: trimEndSec,
+            topic,
+            language,
+          });
+          if (!batch.video_r2_key) throw new Error("Batch processing did not return a video key.");
+          batchKeys.push(batch.video_r2_key);
+        }
+        setProgress(`Finalizing video (${batchKeys.length} batches) with audio…`);
+        data = await finalizeVideo({
+          video_r2_keys: batchKeys,
+          audio: audioPayload.file,
+          audio_r2_key: audioPayload.key,
+          aspect_ratio: aspectRatio,
+          topic,
+          language,
+          upscale_2k: upscale2k,
+          loudnorm,
+        });
+        data.clips_processed = files.length;
+      } else {
+        setProgress("Processing clips and attaching audio…");
+        data = await processVideo({
+          clips: files,
+          audio: audioPayload.file,
+          audio_r2_key: audioPayload.key,
+          aspect_ratio: aspectRatio,
+          trim_end_sec: trimEndSec,
+          topic,
+          language,
+          upscale_2k: upscale2k,
+          loudnorm,
+        });
+      }
+
       setResult(data);
       // Hand off to Animated Captions (and keep a reusable history)
       addVideoHistory({
         video_r2_key: data.video_r2_key,
         video_url: data.video_url,
         duration_seconds: data.duration_seconds,
-        clips_processed: data.clips_processed,
+        clips_processed: data.clips_processed ?? clips.length,
         aspect_ratio: aspectRatio,
         engine_used: "trimmed & zoomed",
       });
@@ -116,6 +163,7 @@ export default function TrimmingAndZoomingPage() {
       setError(e?.message || "Processing failed");
     } finally {
       setProcessing(false);
+      setProgress(null);
     }
   };
 
@@ -124,16 +172,11 @@ export default function TrimmingAndZoomingPage() {
   return (
     <div className="space-y-6 pb-10">
       <header className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">✂️ Trimming &amp; Zooming</h1>
-            <p className="mt-1 text-sm text-gray-600">
-              Trim AI warp tails, apply 2.5s dynamic retention zoom, stitch clips, and attach unified audio.
-            </p>
-          </div>
-          <div className="font-mono text-[11px] text-gray-500 bg-gray-50 border rounded px-3 py-2 overflow-x-auto">
-            clip&apos; = zoompan(trim(clip, end−t)) → stitch({`{clip'}ᵢ`}) ⊕ audio → out
-          </div>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">✂️ Edit Video</h1>
+          <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-3xl">
+            Put your clips together, trim the ends if needed, choose a video shape, and add your audio.
+          </p>
         </div>
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
           {[
@@ -271,6 +314,24 @@ export default function TrimmingAndZoomingPage() {
           </div>
 
           <div className="rounded-lg border p-3 space-y-3">
+            <div className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Export quality options</div>
+            <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+              <input type="checkbox" checked={loudnorm} onChange={(e) => setLoudnorm(e.target.checked)} className="mt-0.5" />
+              <span>
+                <span className="font-medium">Normalize loudness</span>
+                <span className="block text-xs text-gray-500">Balance voice/music level for social playback (recommended).</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+              <input type="checkbox" checked={upscale2k} onChange={(e) => setUpscale2k(e.target.checked)} className="mt-0.5" />
+              <span>
+                <span className="font-medium">YouTube 2K upscale</span>
+                <span className="block text-xs text-gray-500">Export at higher resolution (e.g. 2560×1440 for 16:9) for sharper YouTube delivery. Slower to render.</span>
+              </span>
+            </label>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-3">
             <div className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Unified audio (voiceover + music)</div>
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setAudioMode("upload")} className={`rounded-md border px-3 py-2 text-xs sm:text-sm font-medium ${audioMode === "upload" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 hover:bg-gray-50"}`}>📁 Upload audio</button>
@@ -323,7 +384,10 @@ export default function TrimmingAndZoomingPage() {
         </button>
 
         {processing && (
-          <p className="text-xs text-amber-600 font-mono">Running FFmpeg pipeline on CPU… larger batches take longer.</p>
+          <p className="text-xs text-amber-600 font-mono">
+            {progress || "Running FFmpeg pipeline on CPU… larger batches take longer."}
+            {clips.length > 5 ? " Large jobs are processed in smaller batches automatically to reduce failures." : ""}
+          </p>
         )}
 
         {result && (

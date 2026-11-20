@@ -6,6 +6,10 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Coqui XTTS asks for license acceptance interactively on first download.
+# Prefetch runs unattended (Docker build / CI), so accept it up front.
+os.environ.setdefault("COQUI_TOS_AGREED", "1")
+
 from app.config import WEIGHTS_DIR, HF_TOKEN
 
 if HF_TOKEN:

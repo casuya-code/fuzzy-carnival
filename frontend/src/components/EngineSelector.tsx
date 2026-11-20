@@ -8,81 +8,140 @@ interface Props {
   language: "en" | "sw";
 }
 
-const ENGINES: { id: Engine; label: string; desc: string; cloning: boolean }[] = [
-  { id: "kyutai", label: "FLUENT (EN)", desc: "Fast English zero-shot cloning (~100M)", cloning: true },
-  { id: "afrispeech", label: "AFRICA (EN)", desc: "East African English accent cloning", cloning: true },
-  { id: "msingi", label: "Msingi-AI Sauti (SW)", desc: "Authentic Swahili voice cloning (XTTS-v2)", cloning: true },
-  { id: "mms", label: "Meta MMS-TTS (SW)", desc: "Fast Swahili fallback (no cloning)", cloning: false },
+type EngineMeta = {
+  id: Engine;
+  label: string;
+  desc: string;
+  bestFor: string;
+  usesSample: boolean;
+  tier: "online" | "server";
+  badge?: string;
+};
+
+const ENGINES: EngineMeta[] = [
+  // English
+  {
+    id: "kyutai",
+    label: "English Voice Clone",
+    desc: "Copies your voice sample to read English text.",
+    bestFor: "Custom English voiceovers",
+    usesSample: true,
+    tier: "server",
+  },
+  {
+    id: "afrispeech",
+    label: "English (African Accent)",
+    desc: "Copies your voice sample with an East African English style.",
+    bestFor: "English with African accent",
+    usesSample: true,
+    tier: "server",
+  },
+  // Swahili
+  {
+    id: "azure",
+    label: "Swahili Natural Voice",
+    desc: "High-quality, clear Swahili narration (preset voice).",
+    bestFor: "Stories, documentaries, and clear Swahili narration",
+    usesSample: false,
+    tier: "online",
+    badge: "Recommended for Swahili",
+  },
+  {
+    id: "msingi",
+    label: "Swahili Voice Clone",
+    desc: "Tries to copy your voice sample for Swahili (runs on the server).",
+    bestFor: "Custom Swahili voice when you have a sample",
+    usesSample: true,
+    tier: "server",
+  },
+  {
+    id: "mms",
+    label: "Swahili Basic Voice",
+    desc: "Simple, reliable Swahili voice (preset). Good fallback when online quota is used.",
+    bestFor: "Quick drafts and backup narration",
+    usesSample: false,
+    tier: "server",
+  },
+  // Multilingual cloud
+  {
+    id: "elevenlabs",
+    label: "Expressive Voice (Online)",
+    desc: "Expressive voice for English or Swahili. Can use your voice sample for cloning when voice cloning is enabled, or use a preset voice.",
+    bestFor: "Expressive narration, character-style reads, and custom cloned voices",
+    usesSample: true,
+    tier: "online",
+  },
 ];
 
 export default function EngineSelector({ engine, onChange, language }: Props) {
   const filtered = ENGINES.filter((e) => {
-    if (language === "en") return e.id === "kyutai" || e.id === "afrispeech";
-    return e.id === "msingi" || e.id === "mms";
+    if (language === "en") return e.id === "kyutai" || e.id === "afrispeech" || e.id === "elevenlabs";
+    return e.id === "azure" || e.id === "msingi" || e.id === "mms" || e.id === "elevenlabs";
   });
 
   return (
     <section className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm space-y-4">
-      <div className="flex items-center justify-between gap-2 border-b pb-2">
-        <h3 className="text-base sm:text-lg font-semibold">② Engine Matrix</h3>
-        <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-mono text-blue-700">
-          lang = {language} · n = {filtered.length}
+      <div className="flex items-start justify-between gap-3 border-b pb-3">
+        <div>
+          <h3 className="text-base sm:text-lg font-semibold">Step 2: Choose a voice</h3>
+          <p className="mt-1 text-sm text-gray-600">
+            Pick how you want your text to sound. {language === "sw" ? "For most Swahili projects, the natural online voice is the best starting point." : "Use a voice-clone option if you added a sample."}
+          </p>
+        </div>
+        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 shrink-0">
+          {filtered.length} options
         </span>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
-            <tr>
-              <th className="px-3 py-2 text-center font-semibold w-12">Sel</th>
-              <th className="px-3 py-2 text-left font-semibold">Engine</th>
-              <th className="px-3 py-2 text-left font-semibold">Mode</th>
-              <th className="px-3 py-2 text-left font-semibold hidden md:table-cell">Description</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {filtered.map((e, i) => {
-              const selected = engine === e.id;
-              return (
-                <tr
-                  key={e.id}
-                  onClick={() => onChange(e.id)}
-                  className={`cursor-pointer transition ${selected ? "bg-blue-50" : i % 2 === 0 ? "bg-white hover:bg-gray-50" : "bg-gray-50/40 hover:bg-gray-50"}`}
-                >
-                  <td className="px-3 py-3 text-center">
-                    <input
-                      type="radio"
-                      name="engine"
-                      value={e.id}
-                      checked={selected}
-                      onChange={() => onChange(e.id)}
-                      className="accent-blue-600"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="font-medium text-gray-800">{e.label}</div>
-                    <div className="text-[11px] text-gray-400 font-mono md:hidden mt-0.5">{e.desc}</div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span
-                      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold font-mono ${
-                        e.cloning ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-500"
-                      }`}
-                    >
-                      {e.cloning ? "clone = 1" : "clone = 0"}
+      <div className="space-y-2">
+        {filtered.map((e) => {
+          const selected = engine === e.id;
+          return (
+            <button
+              key={e.id}
+              type="button"
+              onClick={() => onChange(e.id)}
+              className={`w-full text-left rounded-lg border p-3 sm:p-4 transition ${
+                selected
+                  ? "border-blue-500 bg-blue-50/60 ring-1 ring-blue-200"
+                  : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 h-4 w-4 rounded-full border flex items-center justify-center ${selected ? "border-blue-600" : "border-gray-300"}`}>
+                  {selected && <div className="h-2 w-2 rounded-full bg-blue-600" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-semibold text-gray-900">{e.label}</div>
+                    {e.badge && (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                        {e.badge}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-gray-600">{e.desc}</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                    <span className="rounded-md bg-gray-100 px-2 py-0.5 text-gray-700">Best for: {e.bestFor}</span>
+                    <span className={`rounded-md px-2 py-0.5 ${e.usesSample ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-700"}`}>
+                      {e.usesSample ? "Uses your voice sample" : "Preset voice"}
                     </span>
-                  </td>
-                  <td className="px-3 py-3 text-xs text-gray-500 hidden md:table-cell">{e.desc}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <span className={`rounded-md px-2 py-0.5 ${e.tier === "online" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                      {e.tier === "online" ? "Online voice" : "Runs on server"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
-      <div className="text-[11px] text-gray-400 font-mono">
-        active: engine = {engine}
-      </div>
+      {language === "sw" && (
+        <p className="text-xs text-gray-500">
+          Tip: If the online Swahili voice is busy or out of quota, the app can automatically switch to the basic Swahili voice for that request.
+        </p>
+      )}
     </section>
   );
 }

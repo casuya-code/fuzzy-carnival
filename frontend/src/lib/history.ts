@@ -1,10 +1,21 @@
 /** Canonical client-side history for generated audio and video. */
 
+export interface SpeechTimelineSegment {
+  id: number;
+  start: number;
+  end: number;
+  duration: number;
+  text: string;
+}
+
 export interface SpeechHistoryItem {
   audio_r2_key: string;
   audio_url: string;
   engine_used?: string;
   duration_seconds?: number;
+  source_text?: string;
+  timeline?: SpeechTimelineSegment[];
+  timeline_source?: string;
 }
 
 export interface VideoHistoryItem {

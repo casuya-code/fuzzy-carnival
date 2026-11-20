@@ -18,6 +18,7 @@ from app.services.packaging_processor import (
     ACCENTS,
     export_three_vertical_shorts,
     generate_viral_thumbnail,
+    reexport_master_video,
 )
 from app.services.r2_storage import download_reference, upload_output
 
@@ -149,6 +150,8 @@ async def packaging_publish(
     font_path: Optional[str] = Form(None),
     topic: str = Form("Untitled"),
     language: str = Form("en"),
+    upscale_2k: bool = Form(False),
+    loudnorm: bool = Form(False),
 ):
     """Publish the full package: 16:9 master + designed thumbnail + 3 vertical Shorts."""
     _validate(bool(master_video), bool(master_r2_key), hook_words, accent, gradient, clip_length_sec)
@@ -158,10 +161,21 @@ async def packaging_publish(
     try:
         master = _resolve_master(master_video, master_r2_key, work_dir)
 
+        # Optional social export pass for the master (YouTube 2K upscale / loudness normalization)
+        export_master = master
+        if upscale_2k or loudnorm:
+            export_master = str(work_dir / "youtube_master_export.mp4")
+            reexport_master_video(
+                master,
+                export_master,
+                upscale_2k=upscale_2k,
+                loudnorm=loudnorm,
+            )
+
         # 1) Designed thumbnail
         thumb = str(work_dir / "youtube_thumbnail.jpg")
         generate_viral_thumbnail(
-            master, thumb, hook_words=hook_words, font_path=font_path,
+            export_master, thumb, hook_words=hook_words, font_path=font_path,
             accent=accent, gradient=gradient, border=border,
         )
 
@@ -170,7 +184,7 @@ async def packaging_publish(
         phase_names = _parse_csv_str(phases, DEFAULT_PHASES)
         shorts_dir = work_dir / "shorts"
         short_paths = export_three_vertical_shorts(
-            master, str(shorts_dir),
+            export_master, str(shorts_dir),
             clip_length_sec=clip_length_sec,
             start_times=starts,
             title=shorts_title,
@@ -182,7 +196,7 @@ async def packaging_publish(
         # 3) Upload all 5 deliverables to R2 (or /static in local dev)
         date_str, time_str = get_eat_parts()
         master_key = build_video_r2_key("Video_Master16x9", language, topic, "mp4", date_str, time_str)
-        master_url = upload_output(master, master_key)
+        master_url = upload_output(export_master, master_key)
 
         thumb_key = build_video_r2_key("Thumb_1280x720", language, topic, "jpg", date_str, time_str)
         thumb_url = upload_output(thumb, thumb_key)

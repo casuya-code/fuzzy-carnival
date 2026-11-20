@@ -5,6 +5,8 @@ from app.services.text_normalizer import normalize_text
 
 router = APIRouter(prefix="/api/v1", tags=["text"])
 
+CLOUD_ENGINES = {"azure", "elevenlabs"}
+
 
 class NormalizeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
@@ -23,9 +25,11 @@ def normalize(req: NormalizeRequest):
 
 @router.post("/warm")
 def warm(req: WarmRequest):
-    """Pre-load an engine so the next synthesis is fast."""
+    """Pre-load an engine so the next synthesis is fast. Cloud engines are no-op (0 RAM)."""
     if req.engine not in ENGINE_NAMES:
         return {"warmed": False, "error": "unknown engine"}
+    if req.engine in CLOUD_ENGINES:
+        return {"warmed": True, "engine": req.engine, "cloud": True}
     try:
         from app.routers.synthesize import get_manager
         get_manager().get(req.engine)

@@ -87,9 +87,19 @@ def download_reference(key: str, dest: Path | None = None) -> str:
         dest = TEMP_AUDIO_DIR / Path(key).name
     dest.parent.mkdir(parents=True, exist_ok=True)
 
+    # 1) Exact key path inside temp dir (e.g. local-upload keys)
     if local.exists():
         if local.resolve() != Path(dest).resolve():
             shutil.copyfile(local, dest)
+        return str(dest)
+
+    # 2) Local-dev outputs are stored as TEMP_AUDIO_DIR/outputs/<basename>
+    #    regardless of the logical key path.
+    outputs_local = (TEMP_AUDIO_DIR / "outputs" / Path(key).name).resolve()
+    outputs_root = (TEMP_AUDIO_DIR / "outputs").resolve()
+    if outputs_local.is_relative_to(outputs_root) and outputs_local.exists():
+        if outputs_local != Path(dest).resolve():
+            shutil.copyfile(outputs_local, dest)
         return str(dest)
 
     if not _r2_configured():

@@ -1,3 +1,43 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer utilities {
+  .scrollbar-autohide {
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: transparent transparent; /* Firefox: hidden until hover */
+  }
+  .scrollbar-autohide:hover,
+  .scrollbar-autohide:focus-within,
+  .group\/sidebar:hover .scrollbar-autohide {
+    scrollbar-color: rgba(100, 116, 139, 0.45) transparent; /* slate-ish thumb */
+  }
+
+  /* WebKit (Chrome/Edge/Safari): hide by default, show on hover */
+  .scrollbar-autohide::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-autohide::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-autohide::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .scrollbar-autohide::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+  .scrollbar-autohide:hover::-webkit-scrollbar-thumb,
+  .scrollbar-autohide:focus-within::-webkit-scrollbar-thumb,
+  .group\/sidebar:hover .scrollbar-autohide::-webkit-scrollbar-thumb {
+    background-color: rgba(100, 116, 139, 0.45);
+  }
+  .scrollbar-autohide:hover::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(100, 116, 139, 0.65);
+  }
+}

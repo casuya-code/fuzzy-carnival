@@ -67,6 +67,8 @@ export default function AnimatedCaptionsPage() {
   const [preview, setPreview] = useState<CaptionPreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [activeWord, setActiveWord] = useState(0);
+  const [upscale2k, setUpscale2k] = useState(false);
+  const [loudnorm, setLoudnorm] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CaptionResult | null>(null);
@@ -195,6 +197,8 @@ export default function AnimatedCaptionsPage() {
           aspect_ratio: aspectRatio,
           words_per_chunk: wordsPerChunk,
           trim_end_sec: trimEndSec,
+          upscale_2k: upscale2k,
+          loudnorm,
         });
       } else {
         data = await burnCaptions({
@@ -206,6 +210,8 @@ export default function AnimatedCaptionsPage() {
           outro_sec: outroSec,
           aspect_ratio: aspectRatio,
           words_per_chunk: wordsPerChunk,
+          upscale_2k: upscale2k,
+          loudnorm,
         });
       }
       setResult(data);
@@ -236,17 +242,11 @@ export default function AnimatedCaptionsPage() {
   return (
     <div className="space-y-6 pb-10">
       <header className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">💬 Animated Captions</h1>
-            <p className="mt-1 max-w-2xl text-sm text-gray-600">
-              Karaoke-style word-by-word captions burned into 9:16 video with platform-safe margins.
-              Timings come from the script + character weights — no extra AI, no extra RAM.
-            </p>
-          </div>
-          <div className="font-mono text-[11px] text-gray-500 bg-gray-50 border rounded px-3 py-2 overflow-x-auto">
-            tᵢ = t₀ + (Σⱼ&lt;ᵢ wⱼ / Σw)·Tᵥ &nbsp;·&nbsp; ASS → libass → MP4
-          </div>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">💬 Add Captions</h1>
+          <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-3xl">
+            Add easy-to-read captions to your video. Preview the timing and style, then create the final captioned video.
+          </p>
         </div>
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
           {[
@@ -519,6 +519,24 @@ export default function AnimatedCaptionsPage() {
                 </tbody>
               </table>
             </div>
+            <div className="rounded-lg border p-3 space-y-2">
+              <div className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Export quality options</div>
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+                <input type="checkbox" checked={loudnorm} onChange={(e) => setLoudnorm(e.target.checked)} className="mt-0.5" />
+                <span>
+                  <span className="font-medium">Normalize loudness</span>
+                  <span className="block text-xs text-gray-500">Balance audio level for social playback (recommended).</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+                <input type="checkbox" checked={upscale2k} onChange={(e) => setUpscale2k(e.target.checked)} className="mt-0.5" />
+                <span>
+                  <span className="font-medium">YouTube 2K upscale</span>
+                  <span className="block text-xs text-gray-500">Higher-resolution export (e.g. 2560×1440 for 16:9). Slower to render.</span>
+                </span>
+              </label>
+            </div>
+
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={doPreview} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50">🔍 Preview timings &amp; ASS</button>
               <span className="text-[11px] text-gray-400 font-mono">no render — timing math only</span>

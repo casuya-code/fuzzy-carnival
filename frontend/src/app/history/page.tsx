@@ -42,26 +42,30 @@ export default function HistoryPage() {
 
   return (
     <div className="space-y-6 pb-10">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">History</h1>
-          <p className="mt-1 text-sm text-gray-600">
-            Everything generated so far — videos, captions, thumbnails and published packages — kept here so nothing disappears.
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">🗂️ My Files</h1>
+          <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-2xl">
+            Your recent videos, thumbnails, and ready-to-post packages appear here.
           </p>
         </div>
         {items.length > 0 && (
           <button
             onClick={handleClear}
-            className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
+            className="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
           >
-            Clear all
+            Clear list
           </button>
         )}
       </div>
 
       {items.length === 0 && (
-        <div className="rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
-          No deliverables yet. Generate a video, burn captions, or publish a package and it will appear here.
+        <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center shadow-sm">
+          <div className="text-base font-medium text-gray-700">No saved videos, thumbnails, or packages yet</div>
+          <p className="mt-2 text-sm text-gray-500">
+            When you create or export videos, captions, thumbnails, or ready-to-post packages, they will appear here.
+            Generated speech files are saved separately for reuse in <span className="font-medium">Text to Speech</span> and <span className="font-medium">Add Music &amp; Sounds</span>.
+          </p>
         </div>
       )}
 
@@ -123,7 +127,8 @@ export default function HistoryPage() {
                       src={item.url}
                       className="mt-3 h-32 w-full rounded bg-black object-contain"
                       controls
-                      preload="metadata"
+                      preload="none"
+                      playsInline
                     />
                   )}
 

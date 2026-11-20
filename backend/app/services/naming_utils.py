@@ -11,6 +11,8 @@ ENGINE_CODES = {
     "afr": "AFR",
     "msingi": "MSI",
     "mms": "MMS",
+    "azure": "AZR",
+    "elevenlabs": "ELV",
 }
 
 LANG_CODES = {
