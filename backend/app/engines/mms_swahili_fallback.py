@@ -1,7 +1,6 @@
 import os
 import torch
-from pathlib import Path
-from app.config import WEIGHTS_DIR, HF_TOKEN, MMS_MODEL_ID
+from app.config import TEMP_AUDIO_DIR, WEIGHTS_DIR, HF_TOKEN, MMS_MODEL_ID
 from app.engines.base import BaseTTSEngine
 
 MODEL_ID = MMS_MODEL_ID
@@ -58,7 +57,7 @@ class MmsSwahiliFallbackEngine(BaseTTSEngine):
         from scipy.io import wavfile
 
         if output_path is None:
-            output_path = str(Path(__file__).resolve().parents[3] / "temp_audio" / "mms_out.wav")
+            output_path = str(TEMP_AUDIO_DIR / "mms_out.wav")
 
         inputs = self.tokenizer(text, return_tensors="pt")
         if torch.cuda.is_available():

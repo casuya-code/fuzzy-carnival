@@ -1,3 +1,4 @@
+import logging
 import shutil
 import subprocess
 import uuid
@@ -31,6 +32,32 @@ from app.services.r2_storage import download_reference, upload_output
 from app.services.video_processor import stitch_clips_with_audio, stitch_silent_clips, trim_and_zoom_clip
 
 router = APIRouter(prefix="/api/v1/video", tags=["video"])
+logger = logging.getLogger(__name__)
+
+
+def _beat_sync_zoom(
+    audio_path: str | None = None, bpm: float | None = None
+) -> tuple[str | None, float | None]:
+    """Build the same beat-synced zoom for /process and /process-batch.
+
+    Accepts either an audio file to analyse or an already-known BPM. Failures are
+    non-fatal: callers fall back to the static retention zoom.
+    """
+    try:
+        from app.services.beat_sync_processor import (
+            detect_bpm_lightweight,
+            get_beat_synced_zoom_expr,
+        )
+
+        if bpm is None:
+            if not audio_path:
+                return None, None
+            bpm = detect_bpm_lightweight(audio_path)
+        zoom_expr, _ = get_beat_synced_zoom_expr(bpm)
+        return zoom_expr, bpm
+    except Exception as e:
+        logger.warning("Beat-synced zoom setup failed (audio=%s, bpm=%s): %s", audio_path, bpm, e)
+        return None, None
 
 
 @router.post("/process")
@@ -89,17 +116,7 @@ async def process_video(
             )
 
         # Best-effort BPM detection for beat-synced zoompan (falls back to static).
-        zoom_expr = None
-        try:
-            from app.services.beat_sync_processor import (
-                detect_bpm_lightweight,
-                get_beat_synced_zoom_expr,
-            )
-
-            bpm = detect_bpm_lightweight(audio_path)
-            zoom_expr, _ = get_beat_synced_zoom_expr(bpm)
-        except Exception:
-            zoom_expr = None
+        zoom_expr, _ = _beat_sync_zoom(audio_path=audio_path)
 
         # Save and process clips in received order
         for i, up in enumerate(clips):
@@ -197,11 +214,16 @@ async def process_video_batch(
     trim_end_sec: float = Form(DEFAULT_TRIM_END_SEC),
     topic: str = Form("Untitled"),
     language: str = Form("en"),
+    audio: Optional[UploadFile] = File(None),
+    audio_r2_key: Optional[str] = Form(None),
+    bpm: Optional[float] = Form(None),
 ):
     """Process a batch of clips (trim + zoom) and return one stitched silent intermediate video.
 
     Intended for large jobs: frontend can send clips in smaller batches, then call /finalize
-    with the returned intermediate keys and the audio track.
+    with the returned intermediate keys and the audio track. Pass ``audio``, ``audio_r2_key``
+    or ``bpm`` to apply the same beat-synced zoom used by /process; without them the static
+    retention zoom is used (backwards compatible with existing batch callers).
     """
     if not _media_tools_available():
         raise HTTPException(status_code=503, detail="FFmpeg/ffprobe required for video processing")
@@ -220,6 +242,20 @@ async def process_video_batch(
     batch_path = str(work_dir / f"batch_{job_id}.mp4")
 
     try:
+        # Optional audio/BPM makes large-job clips match the direct /process path.
+        batch_audio_path: str | None = None
+        if audio is not None:
+            a_suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
+            batch_audio_path = str(work_dir / f"audio{job_id}{a_suffix}")
+            with open(batch_audio_path, "wb") as f:
+                shutil.copyfileobj(audio.file, f)
+        elif audio_r2_key:
+            batch_audio_path = download_reference(
+                audio_r2_key,
+                dest=work_dir / f"audio{Path(audio_r2_key).suffix or '.mp3'}",
+            )
+        zoom_expr, bpm_used = _beat_sync_zoom(audio_path=batch_audio_path, bpm=bpm)
+
         for i, up in enumerate(clips):
             suffix = Path(up.filename or f"clip_{i}.mp4").suffix or ".mp4"
             raw_path = str(work_dir / f"raw_{i}{suffix}")
@@ -232,6 +268,7 @@ async def process_video_batch(
                     output_path=proc_path,
                     trim_end_sec=trim_end_sec,
                     aspect_ratio=aspect_ratio,
+                    zoom_expr=zoom_expr,
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed processing clip {i + 1}: {e}")
@@ -251,6 +288,8 @@ async def process_video_batch(
             "duration_seconds": duration,
             "clips_processed": len(processed_paths),
             "intermediate": True,
+            "bpm": bpm_used,
+            "zoom_synced": zoom_expr is not None,
         }
     except HTTPException:
         raise

@@ -196,15 +196,18 @@ Set env vars in Vercel dashboard: `R2_*` and `NEXT_PUBLIC_RAILWAY_API_URL`.
 ## API endpoints (Railway)
 
 - `POST /api/v1/synthesize`, `/normalize`, `/warm`
-- `POST /api/v1/mix` (3-layer), `/audio/transform`, `/audio/analyze`
+- `POST /api/v1/mix` (3-layer), `/audio/transform`, `/audio/analyze`, `/audio/bpm`
 - `POST /api/v1/video/process` (optional `script_text` → captions in single pass)
+- `POST /api/v1/video/process-batch` (batch clip processing), `POST /api/v1/video/finalize`
+- `POST /api/v1/timeline` (forced alignment with estimated fallback)
 - `POST /api/v1/captions/preview`, `POST /api/v1/captions/burn`
 - `POST /api/v1/packaging/thumbnail`, `POST /api/v1/packaging/publish`
 
 ## Local dev without R2
 
 When R2 credentials are absent, outputs are served from the backend's `/static`
-mount (e.g. `http://127.0.0.1:8000/static/outputs/...`) and local uploads use
+mount at their full key path (e.g. `http://127.0.0.1:8000/static/audio/20261120/...`);
+older flat `outputs/<basename>` artifacts remain readable. Local uploads use
 `PUT /api/v1/local-upload/{key}`. Ensure FFmpeg (incl. `C:\Users\Admin\ffmpeg` on
 Windows) is on the backend process PATH.
 

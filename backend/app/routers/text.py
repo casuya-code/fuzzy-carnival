@@ -1,11 +1,10 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from app.config import ENGINE_NAMES
+from app.services.model_manager import CLOUD_ENGINES
 from app.services.text_normalizer import normalize_text
 
 router = APIRouter(prefix="/api/v1", tags=["text"])
-
-CLOUD_ENGINES = {"azure", "elevenlabs"}
 
 
 class NormalizeRequest(BaseModel):

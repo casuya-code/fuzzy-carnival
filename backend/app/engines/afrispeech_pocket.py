@@ -1,7 +1,6 @@
 import os
-from pathlib import Path
 import numpy as np
-from app.config import WEIGHTS_DIR, HF_TOKEN
+from app.config import AFRISPEECH_CONFIG, TEMP_AUDIO_DIR, WEIGHTS_DIR, HF_TOKEN
 from app.engines.base import BaseTTSEngine
 
 
@@ -15,7 +14,7 @@ class AfriSpeechPocketEngine(BaseTTSEngine):
         self.weights_dir.mkdir(parents=True, exist_ok=True)
         self.sample_rate = 24000
         # Community checkpoint config (pocket-tts yaml or repo). Override via env.
-        self.config = os.getenv("AFRISPEECH_CONFIG", "")
+        self.config = AFRISPEECH_CONFIG
         self._voice_cache: dict = {}  # content-hash -> voice state
 
     def load(self) -> None:
@@ -48,7 +47,7 @@ class AfriSpeechPocketEngine(BaseTTSEngine):
         import scipy.io.wavfile
 
         if output_path is None:
-            output_path = str(Path(__file__).resolve().parents[3] / "temp_audio" / "afrispeech_out.wav")
+            output_path = str(TEMP_AUDIO_DIR / "afrispeech_out.wav")
 
         import copy
         if reference_audio_path:

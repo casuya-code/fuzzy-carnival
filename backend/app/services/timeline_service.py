@@ -78,7 +78,6 @@ def group_words_into_segments(
         end = max(x["end"] for x in cur)
         dur = max(0.0, end - start)
         word_count = len(cur)
-        text = " ".join(x["text"] for x in cur)
         has_next = i < len(items) - 1
 
         if _ends_sentence(w["text"]):

@@ -42,6 +42,13 @@ _load_dotenv(BASE_DIR / ".env")
 TEMP_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# --- Hugging Face hub cache --------------------------------------------------------
+# pocket-tts resolves weights through huggingface_hub's cache. Pin it under
+# weights/ so weights prefetched during the Docker build are reused at runtime.
+# config is imported before the engines, so this env var is set in time.
+HF_HUB_CACHE = os.getenv("HF_HUB_CACHE", str(WEIGHTS_DIR / "hub"))
+os.environ.setdefault("HF_HUB_CACHE", HF_HUB_CACHE)
+
 # --- Credentials / object storage -------------------------------------------------
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
@@ -87,6 +94,13 @@ WARM_MMS = os.getenv("WARM_MMS", "true").lower() == "true"
 #   mussacharles60/swahili-tts-female-voice       77% / 0.82  (MIT, female voice)
 MMS_MODEL_ID = os.getenv("MMS_MODEL_ID", "facebook/mms-tts-swh")
 
+# Local engine overrides (previously read with os.getenv inside the engines).
+AFRISPEECH_CONFIG = os.getenv("AFRISPEECH_CONFIG", "")
+MSINGI_CHECKPOINT_PATH = os.getenv("MSINGI_CHECKPOINT_PATH", "")
+MSINGI_LANGUAGE = os.getenv("MSINGI_LANGUAGE", "auto").strip().lower()
+SWAHILI_LOANWORDS_PATH = os.getenv("SWAHILI_LOANWORDS_PATH", "").strip()
+PREFETCH_STRICT = os.getenv("PREFETCH_STRICT", "").strip().lower() in {"1", "true", "yes"}
+
 ENGINE_NAMES = ("kyutai", "afrispeech", "msingi", "mms", "azure", "elevenlabs")
 
 # --- Cloud TTS (Azure Speech / ElevenLabs) ---------------------------------------
@@ -109,14 +123,14 @@ MAX_INTRO_SEC = float(os.getenv("MAX_INTRO_SEC", "60"))
 DEFAULT_OUTRO_SEC = float(os.getenv("DEFAULT_OUTRO_SEC", "2.5"))
 MAX_OUTRO_SEC = float(os.getenv("MAX_OUTRO_SEC", "10"))
 DEFAULT_WORDS_PER_CHUNK = int(os.getenv("DEFAULT_WORDS_PER_CHUNK", "3"))
-MAX_WORDS_PER_CHUNK = 8
+MAX_WORDS_PER_CHUNK = int(os.getenv("MAX_WORDS_PER_CHUNK", "8"))
 DEFAULT_TRIM_END_SEC = float(os.getenv("DEFAULT_TRIM_END_SEC", "0.5"))
-MAX_TRIM_END_SEC = 5.0
+MAX_TRIM_END_SEC = float(os.getenv("MAX_TRIM_END_SEC", "5.0"))
 
 # --- Packaging --------------------------------------------------------------------
 DEFAULT_CLIP_LENGTH_SEC = int(os.getenv("DEFAULT_CLIP_LENGTH_SEC", "40"))
-MIN_CLIP_LENGTH_SEC = 5
-MAX_CLIP_LENGTH_SEC = 180
+MIN_CLIP_LENGTH_SEC = int(os.getenv("MIN_CLIP_LENGTH_SEC", "5"))
+MAX_CLIP_LENGTH_SEC = int(os.getenv("MAX_CLIP_LENGTH_SEC", "180"))
 
 # --- Social-ready video export defaults ------------------------------------------
 # Balanced for YouTube / Instagram / Facebook after platform re-compression.

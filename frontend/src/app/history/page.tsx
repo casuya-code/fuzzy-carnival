@@ -18,6 +18,40 @@ const KIND_ICON: Record<DeliverableItem["kind"], string> = {
   package: "📦",
 };
 
+/** Show the metadata we already persist for each deliverable instead of hiding it. */
+function MetaDetails({ meta }: { meta?: Record<string, unknown> }) {
+  if (!meta) return null;
+  const bits: React.ReactNode[] = [];
+  if (typeof meta.width === "number" && typeof meta.height === "number") {
+    bits.push(<span key="wh">{meta.width}×{meta.height}</span>);
+  }
+  if (Array.isArray(meta.hook_words)) {
+    bits.push(<span key="hook">hook: {(meta.hook_words as string[]).join(" / ")}</span>);
+  }
+  if (typeof meta.duration_seconds === "number") {
+    bits.push(<span key="t">T={meta.duration_seconds.toFixed(1)}s</span>);
+  }
+  if (typeof meta.aspect_ratio === "string") {
+    bits.push(<span key="ar">{meta.aspect_ratio}</span>);
+  }
+  if (typeof meta.start_sec === "number" && typeof meta.length_sec === "number") {
+    bits.push(<span key="range">start {meta.start_sec}s · {meta.length_sec}s</span>);
+  }
+  if (typeof meta.ass_url === "string") {
+    bits.push(
+      <a key="ass" href={meta.ass_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+        soft subs (.ass)
+      </a>
+    );
+  }
+  if (bits.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-mono text-gray-500">
+      {bits}
+    </div>
+  );
+}
+
 export default function HistoryPage() {
   const [items, setItems] = useState<DeliverableItem[]>([]);
 
@@ -131,6 +165,8 @@ export default function HistoryPage() {
                       playsInline
                     />
                   )}
+
+                  <MetaDetails meta={item.meta} />
 
                   <div className="mt-3 flex gap-2">
                     <a

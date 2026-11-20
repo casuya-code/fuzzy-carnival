@@ -1,12 +1,13 @@
 /** Canonical client-side history for generated audio and video. */
 
-export interface SpeechTimelineSegment {
-  id: number;
-  start: number;
-  end: number;
-  duration: number;
-  text: string;
-}
+import {
+  type Language,
+  type SynthesizeRequest,
+  type TimelineSegment,
+  HISTORY_LIMIT,
+} from "@/lib/api";
+
+export type { TimelineSegment } from "@/lib/api";
 
 export interface SpeechHistoryItem {
   audio_r2_key: string;
@@ -14,8 +15,13 @@ export interface SpeechHistoryItem {
   engine_used?: string;
   duration_seconds?: number;
   source_text?: string;
-  timeline?: SpeechTimelineSegment[];
+  timeline?: TimelineSegment[];
   timeline_source?: string;
+  warning?: string;
+  language?: Language;
+  topic?: string;
+  /** Exact generation settings, restored when this version is selected. */
+  request?: SynthesizeRequest;
 }
 
 export interface VideoHistoryItem {
@@ -25,11 +31,13 @@ export interface VideoHistoryItem {
   aspect_ratio?: string;
   engine_used?: string;
   clips_processed?: number;
+  language?: Language;
+  topic?: string;
 }
 
 const SPEECH_KEY = "speechHistory";
 const VIDEO_KEY = "videoHistory";
-const LIMIT = 20;
+const LIMIT = HISTORY_LIMIT;
 
 function readList<T>(key: string): T[] {
   if (typeof window === "undefined") return [];
@@ -62,6 +70,18 @@ export function addSpeechHistory(item: SpeechHistoryItem): SpeechHistoryItem[] {
   ];
   writeList(SPEECH_KEY, next);
   return next.slice(0, LIMIT);
+}
+
+/** Persist edits (timeline merge/split, warning, restored request) for one saved take. */
+export function updateSpeechHistory(
+  url: string,
+  patch: Partial<SpeechHistoryItem>
+): SpeechHistoryItem[] {
+  const next = loadSpeechHistory().map((item) =>
+    item.audio_url === url ? { ...item, ...patch } : item
+  );
+  writeList(SPEECH_KEY, next);
+  return next;
 }
 
 export function removeSpeechHistory(url: string): SpeechHistoryItem[] {

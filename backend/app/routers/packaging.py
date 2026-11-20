@@ -12,7 +12,7 @@ from app.config import (
     MIN_CLIP_LENGTH_SEC,
     TEMP_AUDIO_DIR,
 )
-from app.services.naming_utils import build_video_r2_key, get_eat_parts, sanitize_topic
+from app.services.naming_utils import build_video_r2_key, get_eat_parts
 from app.services.audio_processor import _media_tools_available, get_duration
 from app.services.packaging_processor import (
     ACCENTS,
@@ -227,7 +227,8 @@ async def packaging_publish(
             "master_url": master_url,
             "thumbnail_url": thumb_url,
             "short_urls": [s["url"] for s in uploaded_shorts],
-            "duration_seconds": get_duration(master),
+            # Report the uploaded deliverable, not the pre-export master.
+            "duration_seconds": get_duration(export_master),
         }
     except HTTPException:
         raise

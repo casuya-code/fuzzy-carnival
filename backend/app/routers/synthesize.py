@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import re
 import threading
 import uuid
@@ -20,11 +21,17 @@ from app.services.audio_processor import (
 )
 from app.services.model_manager import CLOUD_ENGINES, ModelManager
 from app.services.naming_utils import build_speech_r2_key
-from app.services.r2_storage import download_reference, public_url, upload_output
+from app.services.r2_storage import (
+    download_reference,
+    local_output_path,
+    public_url,
+    upload_output,
+)
 from app.services.text_normalizer import normalize_text
 from app.services.timeline_service import estimate_timeline
 
 router = APIRouter(prefix="/api/v1", tags=["synthesize"])
+logger = logging.getLogger(__name__)
 
 # Singleton model manager
 _manager: ModelManager | None = None
@@ -53,22 +60,6 @@ def get_manager() -> ModelManager:
     if _manager is None:
         _manager = ModelManager()
     return _manager
-
-
-def _split_sentences(text: str, max_len: int = 400) -> list[str]:
-    """Split into sentence-aligned chunks so long text doesn't drift."""
-    parts = re.split(r"(?<=[.!?])\s+", text)
-    chunks: list[str] = []
-    cur = ""
-    for p in parts:
-        if cur and len(cur) + len(p) + 1 > max_len:
-            chunks.append(cur)
-            cur = p
-        else:
-            cur = f"{cur} {p}".strip() if cur else p
-    if cur:
-        chunks.append(cur)
-    return chunks
 
 
 # Pause length (ms) by the punctuation that ends each segment. This is what
@@ -176,8 +167,10 @@ def _cached_response_url(cached: SynthesizeResponse) -> SynthesizeResponse:
     """Re-sign the URL on every cache hit so presigned links never go stale."""
     try:
         return cached.model_copy(update={"audio_url": public_url(cached.audio_r2_key)})
-    except Exception:
-        return cached
+    except Exception as e:
+        # Never hand out a stale URL; the caller evicts this entry and retries.
+        logger.warning("Could not refresh cached audio URL for %s: %s", cached.audio_r2_key, e)
+        raise
 
 
 def _resolve_engine(engine_name: str, language: str) -> str:
@@ -189,6 +182,32 @@ def _resolve_engine(engine_name: str, language: str) -> str:
     if engine_name in ("kyutai", "afrispeech"):
         return "azure"
     return engine_name
+
+
+def _remap_warning(requested: str, effective: str, language: str) -> str | None:
+    """Make the deliberate language remap visible without rejecting the request."""
+    if requested == effective:
+        return None
+    lang_name = "English" if language == "en" else "Swahili"
+    return f"Requested engine '{requested}' was remapped to '{effective}' for {lang_name}."
+
+
+def _join_warnings(existing: str | None, new: str) -> str:
+    return f"{existing} {new}".strip() if existing else new
+
+
+def _make_cache_key(engine_name: str, req: SynthesizeRequest, text: str) -> tuple:
+    """Cache identity must include every setting that changes the delivered take."""
+    denoise = req.denoise_ref if req.denoise_ref is not None else DENOISE_REFERENCE
+    return (
+        engine_name,
+        req.language,
+        text,
+        req.voice_r2_key or "",
+        req.speaking_rate or 1.0,
+        denoise,
+        req.topic or "Untitled",
+    )
 
 
 def _prepare_reference(req: SynthesizeRequest, engine_name: str):
@@ -245,7 +264,7 @@ def _run_synthesis(
         return _synthesize_chunked(
             engine, text, ref_path, raw_out, job_id, pause_ms=220, crossfade=True, speaking_rate=speaking_rate
         )
-    if engine_name == "mms" and (_split_sentences(text).__len__() > 1 or len(text) > 120):
+    if engine_name == "mms" and (len(_split_with_pauses(text)[0]) > 1 or len(text) > 120):
         return _synthesize_chunked(
             engine, text, ref_path, raw_out, job_id, pause_ms=400, crossfade=False, speaking_rate=speaking_rate
         )
@@ -265,24 +284,29 @@ def synthesize(req: SynthesizeRequest):
     requested_engine = req.engine
     engine_name = _resolve_engine(requested_engine, req.language)
 
-    # Cache lookup for identical requests (by effective engine)
-    cache_key = (engine_name, req.language, text, req.voice_r2_key or "", req.speaking_rate or 1.0)
+    # Cache lookup for identical requests (by effective engine and all take-affecting settings)
+    cache_key = _make_cache_key(engine_name, req, text)
     if not req.skip_cache:
         with _cache_lock:
             if cache_key in _result_cache:
                 cached = _result_cache[cache_key]
                 _result_cache.move_to_end(cache_key)
                 # Verify local (dev) output still exists
+                local = local_output_path(cached.audio_r2_key)
                 if "/static/" not in cached.audio_url or (
-                    TEMP_AUDIO_DIR / "outputs" / Path(cached.audio_r2_key).name
-                ).exists():
-                    return _cached_response_url(cached)
+                    local is not None and local.exists()
+                ):
+                    try:
+                        return _cached_response_url(cached)
+                    except Exception:
+                        # URL signing failed: drop the entry and regenerate below.
+                        pass
                 del _result_cache[cache_key]
 
     # Prepare reference audio (cached by voice key) for local cloning engines only
     ref_path = _prepare_reference(req, engine_name)
 
-    warning: str | None = None
+    warning: str | None = _remap_warning(requested_engine, engine_name, req.language)
     job_id = uuid.uuid4().hex
     raw_out = str(TEMP_AUDIO_DIR / f"out_{job_id}.wav")
     mp3_out: str | None = None
@@ -297,14 +321,14 @@ def synthesize(req: SynthesizeRequest):
                     engine_name = "mms"
                     engine = manager.get("mms")
                     ref_path = None
-                    warning = "Azure engine unavailable. Fell back to Meta MMS-TTS."
+                    warning = _join_warnings(warning, "Azure engine unavailable. Fell back to Meta MMS-TTS.")
                 except Exception:
                     raise HTTPException(status_code=503, detail=f"Engine unavailable: {e}")
             else:
                 raise HTTPException(status_code=503, detail=f"Engine unavailable: {e}")
 
         # If we fell back at availability time, update cache key context to effective engine
-        cache_key = (engine_name, req.language, text, req.voice_r2_key or "", req.speaking_rate or 1.0)
+        cache_key = _make_cache_key(engine_name, req, text)
 
         try:
             produced = _run_synthesis(
@@ -312,11 +336,15 @@ def synthesize(req: SynthesizeRequest):
             )
             engine_warning = getattr(engine, "last_warning", None)
             if engine_warning:
-                warning = f"{warning} {engine_warning}".strip() if warning else engine_warning
+                warning = _join_warnings(warning, engine_warning)
         except ElevenLabsCloningUnavailableError as e:
             # Account/plan does not support IVC: fall back to preset ElevenLabs voice.
             if requested_engine == "elevenlabs":
-                warning = "ElevenLabs voice cloning is not available on your current plan. Generated with the preset ElevenLabs voice instead."
+                warning = _join_warnings(
+                    warning,
+                    "ElevenLabs voice cloning is not available on your current plan. "
+                    "Generated with the preset ElevenLabs voice instead.",
+                )
                 produced = _run_synthesis(
                     engine, "elevenlabs", text, req.language, None, raw_out, job_id, speaking_rate=req.speaking_rate
                 )
@@ -330,7 +358,9 @@ def synthesize(req: SynthesizeRequest):
                 raise HTTPException(status_code=503, detail=f"Azure quota exceeded and MMS fallback unavailable: {e}")
             engine_name = "mms"
             ref_path = None
-            warning = "Azure quota exceeded (HTTP 429). Fell back to Meta MMS-TTS for this request."
+            warning = _join_warnings(
+                warning, "Azure quota exceeded (HTTP 429). Fell back to Meta MMS-TTS for this request."
+            )
             # Re-run with fallback (new output path)
             raw_out_fb = str(TEMP_AUDIO_DIR / f"out_{job_id}_fb.wav")
             try:
@@ -357,9 +387,9 @@ def synthesize(req: SynthesizeRequest):
         elif _ffmpeg_available():
             candidate = str(TEMP_AUDIO_DIR / f"out_{job_id}.mp3")
             try:
-                to_mp3(produced, candidate)
-                mp3_out = candidate
-            except Exception:
+                mp3_out = to_mp3(produced, candidate)
+            except Exception as e:
+                logger.warning("MP3 encoding failed for %s: %s; keeping original container", produced, e)
                 mp3_out = produced
         else:
             # No ffmpeg locally: keep original container (wav)
@@ -387,7 +417,8 @@ def synthesize(req: SynthesizeRequest):
                     if tl:
                         timeline = tl
                         timeline_source = src or "provider"
-        except Exception:
+        except Exception as e:
+            logger.warning("Provider timeline extraction failed: %s", e, exc_info=True)
             timeline = None
             timeline_source = None
 
@@ -397,7 +428,8 @@ def synthesize(req: SynthesizeRequest):
                 if est:
                     timeline = est
                     timeline_source = "estimated"
-            except Exception:
+            except Exception as e:
+                logger.warning("Timeline estimation failed: %s", e, exc_info=True)
                 timeline = None
                 timeline_source = "unavailable"
         elif not timeline_source:
@@ -419,7 +451,7 @@ def synthesize(req: SynthesizeRequest):
 
         # Cache successful result by effective engine (without warning to avoid persisting transient fallback notices)
         cache_store = result.model_copy(update={"warning": None})
-        cache_key_store = (engine_name, req.language, text, req.voice_r2_key or "", req.speaking_rate or 1.0)
+        cache_key_store = _make_cache_key(engine_name, req, text)
         with _cache_lock:
             _result_cache[cache_key_store] = cache_store
             while len(_result_cache) > _CACHE_MAX:

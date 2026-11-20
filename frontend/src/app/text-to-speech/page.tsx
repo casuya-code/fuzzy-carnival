@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Engine, SynthesizeResponse, SynthesizeRequest, checkHealth, warmEngine } from "@/lib/api";
-import { addSpeechHistory, loadSpeechHistory, removeSpeechHistory } from "@/lib/history";
+import {
+  checkHealth,
+  DEFAULT_ENGINE,
+  Engine,
+  ENGINE_LABEL,
+  HealthResponse,
+  HISTORY_LIMIT,
+  SynthesizeRequest,
+  SynthesizeResponse,
+  warmEngine,
+} from "@/lib/api";
+import { addSpeechHistory, loadSpeechHistory, removeSpeechHistory, updateSpeechHistory } from "@/lib/history";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import EngineSelector from "@/components/EngineSelector";
 import TextToSpeechForm from "@/components/TextToSpeechForm";
@@ -11,12 +21,13 @@ import SpeechTimelineSidebar from "@/components/SpeechTimelineSidebar";
 
 export default function TextToSpeechPage() {
   const [language, setLanguage] = useState<"en" | "sw">("en");
-  const [engine, setEngine] = useState<Engine>("kyutai");
+  const [engine, setEngine] = useState<Engine>(DEFAULT_ENGINE.en);
   const [voiceKey, setVoiceKey] = useState<string | null>(null);
   const [denoiseRef, setDenoiseRef] = useState(true);
   const [result, setResult] = useState<SynthesizeResponse | null>(null);
   const [history, setHistory] = useState<SynthesizeResponse[]>([]);
   const [backendStatus, setBackendStatus] = useState<"checking" | "awake" | "sleeping">("checking");
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [lastReq, setLastReq] = useState<SynthesizeRequest | null>(null);
 
   // Restore saved preferences and recent speech history after mount
@@ -32,13 +43,16 @@ export default function TextToSpeechPage() {
         audio_url: s.audio_url,
         engine_used: s.engine_used || "unknown",
         duration_seconds: s.duration_seconds,
-        source_text: s.source_text,
+        source_text: s.source_text || s.request?.text,
         timeline: s.timeline,
         timeline_source: s.timeline_source,
+        warning: s.warning,
+        request: s.request,
       })) as SynthesizeResponse[];
       if (savedSpeech.length > 0) {
-        setHistory(savedSpeech.slice(0, 8));
+        setHistory(savedSpeech.slice(0, HISTORY_LIMIT));
         setResult((cur) => cur ?? savedSpeech[0]);
+        setLastReq((cur) => cur ?? savedSpeech[0].request ?? null);
       }
     } catch {}
   }, []);
@@ -58,10 +72,11 @@ export default function TextToSpeechPage() {
     const enriched: SynthesizeResponse = {
       ...res,
       source_text: res.source_text || req.text,
+      request: req,
     };
     setResult(enriched);
     setLastReq(req);
-    setHistory((prev) => [enriched, ...prev.filter((r) => r.audio_url !== enriched.audio_url)].slice(0, 8));
+    setHistory((prev) => [enriched, ...prev.filter((r) => r.audio_url !== enriched.audio_url)].slice(0, HISTORY_LIMIT));
     // Persist to shared speech history for other pages and timeline reuse
     addSpeechHistory({
       audio_r2_key: enriched.audio_r2_key,
@@ -71,6 +86,10 @@ export default function TextToSpeechPage() {
       source_text: enriched.source_text || undefined,
       timeline: enriched.timeline || undefined,
       timeline_source: enriched.timeline_source || undefined,
+      warning: enriched.warning,
+      language: req.language,
+      topic: req.topic,
+      request: req,
     });
   };
 
@@ -85,17 +104,19 @@ export default function TextToSpeechPage() {
 
   const handleSelectHistory = (item: SynthesizeResponse) => {
     setResult(item);
-    if (item.source_text) {
-      setLastReq({
-        text: item.source_text,
-        language,
-        engine,
-        voice_r2_key: voiceKey,
-        denoise_ref: denoiseRef,
-      });
-    } else {
-      setLastReq(null);
-    }
+    // Prefer the exact request that produced this take; only rebuild for legacy entries.
+    setLastReq(
+      item.request ??
+        (item.source_text
+          ? {
+              text: item.source_text,
+              language,
+              engine,
+              voice_r2_key: voiceKey,
+              denoise_ref: denoiseRef,
+            }
+          : null)
+    );
   };
 
   useEffect(() => {
@@ -103,12 +124,16 @@ export default function TextToSpeechPage() {
     const ping = async () => {
       setBackendStatus("checking");
       try {
-        await checkHealth();
+        const data = await checkHealth();
         if (!cancelled) {
-          setBackendStatus("awake");
+          setHealth(data);
+          setBackendStatus(data.awake ? "awake" : "sleeping");
         }
       } catch {
-        if (!cancelled) setBackendStatus("sleeping");
+        if (!cancelled) {
+          setHealth(null);
+          setBackendStatus("sleeping");
+        }
       }
     };
     ping();
@@ -124,14 +149,25 @@ export default function TextToSpeechPage() {
     warmEngine(engine);
   }, [engine]);
 
-  const engineLabel: Record<Engine, string> = {
-    kyutai: "English Voice Clone",
-    afrispeech: "English (African Accent)",
-    msingi: "Swahili Voice Clone",
-    mms: "Swahili (Basic Voice)",
-    azure: "Swahili Natural Voice",
-    elevenlabs: "Expressive Voice (Online)",
-  };
+  const healthDetail = health
+    ? [
+        health.status ? `status: ${health.status}` : null,
+        `awake: ${health.awake}`,
+        health.loaded_models?.length
+          ? `loaded_models: ${health.loaded_models.join(", ")}`
+          : "loaded_models: none",
+        health.engines?.length ? `engines: ${health.engines.join(", ")}` : "engines: none",
+        health.capabilities
+          ? [
+              health.capabilities.azure_configured ? "Azure ready" : "Azure not configured",
+              health.capabilities.elevenlabs_configured ? "ElevenLabs ready" : "ElevenLabs not configured",
+              health.capabilities.elevenlabs_cloning ? "cloning on" : "cloning off",
+            ].join(" · ")
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "No health response yet";
 
   const statusText =
     backendStatus === "awake"
@@ -139,6 +175,8 @@ export default function TextToSpeechPage() {
       : backendStatus === "checking"
         ? "Checking connection..."
         : "Waking up (first request may take a little longer)";
+
+  const activeAudioUrl = result?.audio_url;
 
   return (
     <div className="space-y-6 pb-10">
@@ -151,7 +189,7 @@ export default function TextToSpeechPage() {
               choose a voice, then create and download your audio.
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-xs sm:text-sm shadow-sm self-start">
+          <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-xs sm:text-sm shadow-sm self-start" title={healthDetail}>
             <span
               className={`inline-block h-2.5 w-2.5 rounded-full ${
                 backendStatus === "awake"
@@ -172,13 +210,18 @@ export default function TextToSpeechPage() {
             >
               {statusText}
             </span>
+            {health && (
+              <span className="hidden sm:inline text-[10px] text-gray-500">
+                awake: {String(health.awake)}{health.loaded_models?.length ? ` · ${health.loaded_models.length} models` : ""}{health.engines?.length ? ` · ${health.engines.length} engines` : ""}
+              </span>
+            )}
           </div>
         </div>
 
         <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Language", value: language === "en" ? "English" : "Swahili" },
-            { label: "Voice", value: engineLabel[engine] },
+            { label: "Voice", value: ENGINE_LABEL[engine] },
             { label: "Your voice sample", value: voiceKey ? "Added" : "Not added" },
             { label: "Noise cleanup", value: denoiseRef ? "On" : "Off" },
           ].map((m) => (
@@ -243,9 +286,12 @@ export default function TextToSpeechPage() {
               setResult((cur) => (cur ? { ...cur, timeline, timeline_source: source } : cur));
               setHistory((prev) =>
                 prev.map((h) =>
-                  h.audio_url === result?.audio_url ? { ...h, timeline, timeline_source: source } : h
+                  h.audio_url === activeAudioUrl ? { ...h, timeline, timeline_source: source } : h
                 )
               );
+              if (activeAudioUrl) {
+                updateSpeechHistory(activeAudioUrl, { timeline, timeline_source: source });
+              }
             }}
           />
         </div>

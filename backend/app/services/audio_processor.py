@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import subprocess
@@ -10,6 +11,8 @@ from scipy.signal import resample_poly
 from math import gcd
 
 from app.config import TEMP_AUDIO_DIR
+
+logger = logging.getLogger(__name__)
 
 
 def _ffmpeg_available() -> bool:
@@ -200,45 +203,45 @@ def normalize_reference(input_path: str, output_path: str, sr: int = 24000, deno
                 rate, data = wavfile.read(output_path)
                 data = _clean_reference(data, rate, denoise=denoise)
                 wavfile.write(output_path, rate, data)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Reference post-processing failed for %s: %s", output_path, e)
             return output_path
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("FFmpeg reference conversion failed for %s: %s", input_path, e)
 
     # Fallback: PyAV (handles webm/opus from browser) - includes cleaning
     try:
         return _convert_with_av(input_path, output_path, sr, denoise=denoise)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("PyAV reference conversion failed for %s: %s", input_path, e)
 
     # Fallback: soundfile - includes cleaning
     try:
         return _convert_with_soundfile(input_path, output_path, sr, denoise=denoise)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("soundfile reference conversion failed for %s: %s", input_path, e)
 
-    # Last resort: copy (may fail downstream if format unsupported)
-    shutil.copyfile(input_path, output_path)
-    return output_path
+    # Copying raw bytes to a .wav path would corrupt downstream reads.
+    raise RuntimeError(f"Could not normalize reference audio: {input_path}")
 
 
 def to_mp3(input_path: str, output_path: str, bitrate: str = "128k") -> str:
-    """Convert audio to mp3 for delivery."""
-    if _ffmpeg_available():
-        try:
-            cmd = [
-                "ffmpeg", "-nostdin", "-y", "-i", input_path,
-                "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-                "-codec:a", "libmp3lame", "-b:a", bitrate,
-                output_path,
-            ]
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return output_path
-        except Exception:
-            pass
-    # No ffmpeg: keep as-is (caller handles wav fallback)
-    shutil.copyfile(input_path, output_path)
+    """Convert audio to mp3 for delivery; returns the path actually produced."""
+    if not _ffmpeg_available():
+        # No ffmpeg: return the original file so its extension still matches its bytes.
+        logger.debug("ffmpeg unavailable; keeping original container for %s", input_path)
+        return input_path
+    cmd = [
+        "ffmpeg", "-nostdin", "-y", "-i", input_path,
+        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+        "-codec:a", "libmp3lame", "-b:a", bitrate,
+        output_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        logger.warning("FFmpeg MP3 conversion failed for %s: %s", input_path, e)
+        raise RuntimeError(f"FFmpeg MP3 conversion failed: {e}") from e
     return output_path
 
 
@@ -379,8 +382,8 @@ def get_duration(path: str) -> float:
                 capture_output=True, text=True, check=True,
             )
             return float(out.stdout.strip())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("ffprobe failed for %s: %s; falling back to WAV header", path, e)
     # Fallback: read wav header
     try:
         rate, data = wavfile.read(path)
@@ -471,9 +474,9 @@ def mix_voice_with_music(
         f"adelay={intro_ms}|{intro_ms},apad=pad_dur={outro_sec}[voice_padded]",
     ]
     if music_path:
-        filter_parts.append(f"[voice_padded]asplit=2[voice_out][voice_trigger]")
+        filter_parts.append("[voice_padded]asplit=2[voice_out][voice_trigger]")
     else:
-        filter_parts.append(f"[voice_padded]anull[voice_out]")
+        filter_parts.append("[voice_padded]anull[voice_out]")
 
     inputs = ["-i", voice_path]
     mix_inputs = ["[voice_out]"]
@@ -486,8 +489,8 @@ def mix_voice_with_music(
             f"[{next_idx}:a]aresample=44100,aformat=channel_layouts=stereo,"
             f"volume={music_volume},atrim=0:{total_dur:.2f},"
             f"afade=t=in:st=0:d={fade_in_d:.3f},afade=t=out:st={fade_out_start:.3f}:d={fade_out_d:.3f}[music_base]",
-            f"[music_base][voice_trigger]sidechaincompress="
-            f"threshold=0.015:ratio=6:attack=40:release=350[music_ducked]",
+            "[music_base][voice_trigger]sidechaincompress="
+            "threshold=0.015:ratio=6:attack=40:release=350[music_ducked]",
         ]
         mix_inputs.append("[music_ducked]")
         next_idx += 1

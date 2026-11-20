@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Engine, synthesize, SynthesizeResponse, SynthesizeRequest, normalizePreview } from "@/lib/api";
+import {
+  DEFAULT_ENGINE,
+  ENGINES_BY_LANGUAGE,
+  ENGINE_LABEL,
+  Engine,
+  normalizePreview,
+  SynthesizeRequest,
+  SynthesizeResponse,
+  synthesize,
+} from "@/lib/api";
 
 interface Props {
   language: "en" | "sw";
@@ -14,15 +23,6 @@ interface Props {
 }
 
 const MAX_CHARS = 2000;
-
-const engineLabel: Record<Engine, string> = {
-  kyutai: "English Voice Clone",
-  afrispeech: "English (African Accent)",
-  msingi: "Swahili Voice Clone",
-  mms: "Swahili (Basic Voice)",
-  azure: "Swahili Natural Voice",
-  elevenlabs: "Expressive Voice (Online)",
-};
 
 const cloningEngines: Engine[] = ["kyutai", "afrispeech", "msingi"];
 const optionalSampleEngines: Engine[] = ["elevenlabs"];
@@ -46,6 +46,7 @@ export default function TextToSpeechForm({
   const [showNorm, setShowNorm] = useState(false);
   const [normalized, setNormalized] = useState("");
   const [normLoading, setNormLoading] = useState(false);
+  const [normError, setNormError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -64,23 +65,26 @@ export default function TextToSpeechForm({
   }, []);
 
   useEffect(() => {
-    const enEngines: Engine[] = ["kyutai", "afrispeech", "elevenlabs"];
-    const swEngines: Engine[] = ["azure", "msingi", "mms", "elevenlabs"];
-    if (language === "en" && !enEngines.includes(engine)) setEngine("kyutai");
-    if (language === "sw" && !swEngines.includes(engine)) setEngine("azure");
+    if (!ENGINES_BY_LANGUAGE[language].includes(engine)) {
+      setEngine(DEFAULT_ENGINE[language]);
+    }
   }, [language]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch normalized preview when toggled or inputs change
   useEffect(() => {
-    if (!showNorm || !text.trim()) { setNormalized(""); return; }
+    if (!showNorm || !text.trim()) { setNormalized(""); setNormError(null); return; }
     let cancelled = false;
     setNormLoading(true);
+    setNormError(null);
     const t = setTimeout(async () => {
       try {
         const n = await normalizePreview(text, language);
         if (!cancelled) setNormalized(n);
       } catch {
-        if (!cancelled) setNormalized(text);
+        if (!cancelled) {
+          setNormalized(text);
+          setNormError("Preview unavailable — showing your original text.");
+        }
       } finally {
         if (!cancelled) setNormLoading(false);
       }
@@ -181,7 +185,7 @@ export default function TextToSpeechForm({
       <div className="rounded-lg border bg-gray-50/60 p-3 sm:p-4 space-y-2 text-sm">
         <div className="flex items-center justify-between gap-2">
           <span className="text-gray-600">Selected voice</span>
-          <span className="font-medium text-gray-900 text-right">{engineLabel[engine]}</span>
+          <span className="font-medium text-gray-900 text-right">{ENGINE_LABEL[engine]}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-gray-600">Your voice sample</span>
@@ -280,8 +284,15 @@ export default function TextToSpeechForm({
           <span>Show how the text will be read (helps with numbers and symbols)</span>
         </label>
         {showNorm && (
-          <div className="rounded-md bg-white border p-3 text-sm text-gray-700 whitespace-pre-wrap min-h-[2.75rem]">
-            {normLoading ? "Preparing preview..." : normalized || "Type some text above to see a preview."}
+          <div className="space-y-2">
+            <div className="rounded-md bg-white border p-3 text-sm text-gray-700 whitespace-pre-wrap min-h-[2.75rem]">
+              {normLoading ? "Preparing preview..." : normalized || "Type some text above to see a preview."}
+            </div>
+            {normError && (
+              <p className="rounded-md bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800">
+                <strong>Note:</strong> {normError}
+              </p>
+            )}
           </div>
         )}
       </div>

@@ -1,16 +1,15 @@
 "use client";
 
-import { Engine } from "@/lib/api";
+import { ENGINE_LABEL, ENGINES_BY_LANGUAGE, type Engine, type Language } from "@/lib/api";
 
 interface Props {
   engine: Engine;
   onChange: (e: Engine) => void;
-  language: "en" | "sw";
+  language: Language;
 }
 
 type EngineMeta = {
   id: Engine;
-  label: string;
   desc: string;
   bestFor: string;
   usesSample: boolean;
@@ -22,7 +21,6 @@ const ENGINES: EngineMeta[] = [
   // English
   {
     id: "kyutai",
-    label: "English Voice Clone",
     desc: "Copies your voice sample to read English text.",
     bestFor: "Custom English voiceovers",
     usesSample: true,
@@ -30,7 +28,6 @@ const ENGINES: EngineMeta[] = [
   },
   {
     id: "afrispeech",
-    label: "English (African Accent)",
     desc: "Copies your voice sample with an East African English style.",
     bestFor: "English with African accent",
     usesSample: true,
@@ -39,7 +36,6 @@ const ENGINES: EngineMeta[] = [
   // Swahili
   {
     id: "azure",
-    label: "Swahili Natural Voice",
     desc: "High-quality, clear Swahili narration (preset voice).",
     bestFor: "Stories, documentaries, and clear Swahili narration",
     usesSample: false,
@@ -48,7 +44,6 @@ const ENGINES: EngineMeta[] = [
   },
   {
     id: "msingi",
-    label: "Swahili Voice Clone",
     desc: "Tries to copy your voice sample for Swahili (runs on the server).",
     bestFor: "Custom Swahili voice when you have a sample",
     usesSample: true,
@@ -56,7 +51,6 @@ const ENGINES: EngineMeta[] = [
   },
   {
     id: "mms",
-    label: "Swahili Basic Voice",
     desc: "Simple, reliable Swahili voice (preset). Good fallback when online quota is used.",
     bestFor: "Quick drafts and backup narration",
     usesSample: false,
@@ -65,7 +59,6 @@ const ENGINES: EngineMeta[] = [
   // Multilingual cloud
   {
     id: "elevenlabs",
-    label: "Expressive Voice (Online)",
     desc: "Expressive voice for English or Swahili. Can use your voice sample for cloning when voice cloning is enabled, or use a preset voice.",
     bestFor: "Expressive narration, character-style reads, and custom cloned voices",
     usesSample: true,
@@ -74,10 +67,8 @@ const ENGINES: EngineMeta[] = [
 ];
 
 export default function EngineSelector({ engine, onChange, language }: Props) {
-  const filtered = ENGINES.filter((e) => {
-    if (language === "en") return e.id === "kyutai" || e.id === "afrispeech" || e.id === "elevenlabs";
-    return e.id === "azure" || e.id === "msingi" || e.id === "mms" || e.id === "elevenlabs";
-  });
+  const allowed = ENGINES_BY_LANGUAGE[language];
+  const filtered = ENGINES.filter((e) => allowed.includes(e.id));
 
   return (
     <section className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm space-y-4">
@@ -113,7 +104,7 @@ export default function EngineSelector({ engine, onChange, language }: Props) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="font-semibold text-gray-900">{e.label}</div>
+                    <div className="font-semibold text-gray-900">{ENGINE_LABEL[e.id]}</div>
                     {e.badge && (
                       <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                         {e.badge}

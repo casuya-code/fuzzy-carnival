@@ -20,17 +20,11 @@ from app.config import (
     SOCIAL_VIDEO_CRF,
     SOCIAL_VIDEO_PRESET,
 )
-
-# Safe-zone presets (PlayRes + margins). For 9:16 the bottom ~380-450px are
-# covered by platform UI and the right ~150px by like/share buttons, so captions
-# are locked into the clean center-lower zone via MarginV=520 / MarginR=160.
-SAFE_ZONES = {
-    "9:16": {"w": 1080, "h": 1920, "font": 78, "ml": 90, "mr": 160, "mv": 520, "align": 2},
-    "1:1": {"w": 1080, "h": 1080, "font": 72, "ml": 80, "mr": 80, "mv": 180, "align": 2},
-    "16:9": {"w": 1920, "h": 1080, "font": 68, "ml": 140, "mr": 140, "mv": 120, "align": 2},
-}
-
-DEFAULT_ASPECT_RATIO = "9:16"
+from app.services.media_math import (
+    DEFAULT_ASPECT_RATIO,
+    SAFE_ZONES,
+    upscale_dims as _upscale_dims,
+)
 
 HIGHLIGHT = "&H00FFFF&"  # ASS BGR -> bright yellow
 BASE = "&HFFFFFF&"       # white
@@ -175,20 +169,6 @@ def ass_filter_arg(ass_path: str, working_dir: str | None = None) -> str:
         name = os.path.abspath(ass_path).replace("\\", "/").replace(":", "\\:")
     name = name.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
     return f"ass='{name}'"
-
-
-def _upscale_dims(aspect_ratio: str | None, upscale_2k: bool) -> tuple[int, int] | None:
-    if not upscale_2k:
-        return None
-    ar = aspect_ratio or DEFAULT_ASPECT_RATIO
-    if ar == "16:9":
-        return (2560, 1440)
-    if ar == "9:16":
-        return (1440, 2560)
-    if ar == "1:1":
-        return (1440, 1440)
-    zone = SAFE_ZONES.get(ar, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
-    return (zone["w"], zone["h"])
 
 
 def burn_captions_onto_video(

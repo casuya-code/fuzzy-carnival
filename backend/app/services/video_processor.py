@@ -12,7 +12,12 @@ from app.config import (
     SOCIAL_VIDEO_PRESET,
 )
 from app.services.audio_processor import get_duration
-from app.services.captions_processor import DEFAULT_ASPECT_RATIO, SAFE_ZONES, ass_filter_arg
+from app.services.captions_processor import ass_filter_arg
+from app.services.media_math import (
+    DEFAULT_ASPECT_RATIO,
+    SAFE_ZONES,
+    upscale_dims as _upscale_dims,
+)
 
 __all__ = ["get_duration", "trim_and_zoom_clip", "stitch_clips_with_audio", "stitch_silent_clips"]
 
@@ -71,20 +76,6 @@ def trim_and_zoom_clip(
 
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     return output_path
-
-
-def _upscale_dims(aspect_ratio: str | None, upscale_2k: bool) -> tuple[int, int] | None:
-    if not upscale_2k:
-        return None
-    ar = (aspect_ratio or DEFAULT_ASPECT_RATIO)
-    if ar == "16:9":
-        return (2560, 1440)
-    if ar == "9:16":
-        return (1440, 2560)
-    if ar == "1:1":
-        return (1440, 1440)
-    zone = SAFE_ZONES.get(ar, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
-    return (zone["w"], zone["h"])
 
 
 def stitch_clips_with_audio(

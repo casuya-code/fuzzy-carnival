@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { finalizeVideo, processVideo, processVideoBatch, VideoProcessResult } from "@/lib/api";
+import { type Language, finalizeVideo, processVideo, processVideoBatch, VideoProcessResult } from "@/lib/api";
 import { fmtSize } from "@/lib/format";
 import { addDeliverable, addVideoHistory, loadSpeechHistory, SpeechHistoryItem } from "@/lib/history";
 import { createObjectUrlRegistry } from "@/lib/objectUrls";
@@ -20,6 +21,7 @@ export default function TrimmingAndZoomingPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioHistory, setAudioHistory] = useState<SpeechHistoryItem[]>([]);
   const [selectedAudioUrl, setSelectedAudioUrl] = useState<string>("");
+  const [language, setLanguage] = useState<Language>("en");
   const [upscale2k, setUpscale2k] = useState(false);
   const [loudnorm, setLoudnorm] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -31,7 +33,11 @@ export default function TrimmingAndZoomingPage() {
   const audioInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setAudioHistory(loadSpeechHistory());
+    const history = loadSpeechHistory();
+    setAudioHistory(history);
+    // Inherit the language of the most recent speech take when available.
+    const firstWithLanguage = history.find((s) => s.language);
+    if (firstWithLanguage?.language) setLanguage(firstWithLanguage.language);
   }, []);
 
   useEffect(() => {
@@ -89,7 +95,6 @@ export default function TrimmingAndZoomingPage() {
     }
 
     const topic = (typeof window !== "undefined" && localStorage.getItem("projectTopic")) || "Untitled";
-    const language = "en";
     const files = clips.map((c) => c.file);
 
     setProcessing(true);
@@ -111,6 +116,10 @@ export default function TrimmingAndZoomingPage() {
             trim_end_sec: trimEndSec,
             topic,
             language,
+            // Forward the selected audio so batch jobs get beat-synced zoom too.
+            // No bpm is computed on this page — the backend derives it from the audio.
+            audio: audioPayload.file,
+            audio_r2_key: audioPayload.key,
           });
           if (!batch.video_r2_key) throw new Error("Batch processing did not return a video key.");
           batchKeys.push(batch.video_r2_key);
@@ -126,7 +135,6 @@ export default function TrimmingAndZoomingPage() {
           upscale_2k: upscale2k,
           loudnorm,
         });
-        data.clips_processed = files.length;
       } else {
         setProgress("Processing clips and attaching audio…");
         data = await processVideo({
@@ -143,13 +151,16 @@ export default function TrimmingAndZoomingPage() {
       }
 
       setResult(data);
-      // Hand off to Animated Captions (and keep a reusable history)
+      // Keep a reusable history entry; the handoff link below opens Add Captions
+      // with this video URL selected.
       addVideoHistory({
         video_r2_key: data.video_r2_key,
         video_url: data.video_url,
         duration_seconds: data.duration_seconds,
         clips_processed: data.clips_processed ?? clips.length,
         aspect_ratio: aspectRatio,
+        language,
+        topic,
         engine_used: "trimmed & zoomed",
       });
       addDeliverable({
@@ -157,7 +168,11 @@ export default function TrimmingAndZoomingPage() {
         title: `Trimmed & zoomed (${data.clips_processed ?? clips.length} clips)`,
         url: data.video_url,
         r2_key: data.video_r2_key,
-        meta: { duration_seconds: data.duration_seconds, aspect_ratio: aspectRatio },
+        meta: {
+          duration_seconds: data.duration_seconds,
+          aspect_ratio: aspectRatio,
+          clips_processed: data.clips_processed ?? clips.length,
+        },
       });
     } catch (e: any) {
       setError(e?.message || "Processing failed");
@@ -168,6 +183,11 @@ export default function TrimmingAndZoomingPage() {
   };
 
   const selectedAudio = audioHistory.find((a) => a.audio_url === selectedAudioUrl);
+  const selectHistoryAudio = (url: string) => {
+    setSelectedAudioUrl(url);
+    const s = audioHistory.find((a) => a.audio_url === url);
+    if (s?.language) setLanguage(s.language);
+  };
 
   return (
     <div className="space-y-6 pb-10">
@@ -183,7 +203,7 @@ export default function TrimmingAndZoomingPage() {
             { label: "Clips (n)", value: clips.length },
             { label: "Trim (t)", value: `${trimEndSec.toFixed(1)}s` },
             { label: "Aspect (r)", value: aspectRatio },
-            { label: "Zoom cycle", value: "2.5s" },
+            { label: "Zoom (fixed)", value: "2.5s" },
           ].map((m) => (
             <div key={m.label} className="rounded-lg border bg-gradient-to-b from-gray-50 to-white px-2 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-400">{m.label}</div>
@@ -304,9 +324,20 @@ export default function TrimmingAndZoomingPage() {
                   <td className="px-3 py-3 text-right font-mono tabular-nums">{trimEndSec.toFixed(1)} s</td>
                 </tr>
                 <tr className="bg-white">
-                  <td className="px-3 py-3 font-medium text-gray-800">Zoom cycle</td>
+                  <td className="px-3 py-3 font-medium text-gray-800">Language</td>
+                  <td className="px-3 py-3 font-mono text-gray-500">ℓ</td>
+                  <td className="px-3 py-3">
+                    <select value={language} onChange={(e) => setLanguage(e.target.value as Language)} className="w-full max-w-[12rem] rounded-md border border-gray-300 px-2 py-1.5 text-sm">
+                      <option value="en">English (en)</option>
+                      <option value="sw">Swahili (sw)</option>
+                    </select>
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono tabular-nums">{language}</td>
+                </tr>
+                <tr className="bg-gray-50/40">
+                  <td className="px-3 py-3 font-medium text-gray-800">Zoom cycle (fixed)</td>
                   <td className="px-3 py-3 font-mono text-gray-500">z</td>
-                  <td className="px-3 py-3 text-xs text-gray-500">1.0→1.12× every 75 frames (30 fps)</td>
+                  <td className="px-3 py-3 text-xs text-gray-500">Fixed pipeline behavior — 1.0→1.12× every 75 frames (30 fps); not adjustable here</td>
                   <td className="px-3 py-3 text-right font-mono tabular-nums">2.5 s</td>
                 </tr>
               </tbody>
@@ -347,7 +378,7 @@ export default function TrimmingAndZoomingPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                <select value={selectedAudioUrl} onChange={(e) => setSelectedAudioUrl(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm">
+                <select value={selectedAudioUrl} onChange={(e) => selectHistoryAudio(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm">
                   <option value="">∅ Select from generated/mixed audio…</option>
                   {audioHistory.map((a) => (
                     <option key={a.audio_url} value={a.audio_url}>
@@ -401,6 +432,12 @@ export default function TrimmingAndZoomingPage() {
             <video controls src={result.video_url} className="w-full rounded-lg bg-black max-h-[480px]" />
             <div className="flex items-center gap-3 flex-wrap">
               <a href={result.video_url} download={`stitched-${result.video_r2_key?.split("/").pop() || "output.mp4"}`} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700">⬇ Download MP4</a>
+              <Link
+                href={`/animated-captions?video_url=${encodeURIComponent(result.video_url)}`}
+                className="rounded-md border border-purple-300 px-3 py-1.5 text-xs font-medium text-purple-700 transition hover:bg-purple-50"
+              >
+                ➕ Open in Add Captions
+              </Link>
               <span className="text-[11px] text-gray-500 font-mono truncate max-w-full">{result.video_r2_key || "video output"}</span>
             </div>
           </div>

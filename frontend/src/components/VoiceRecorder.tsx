@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { analyzeAudio, ReferenceAnalysis, requestUploadUrl, uploadToR2 } from "@/lib/api";
+import { getMediaDuration } from "@/lib/media";
 
 interface Props {
   onUploaded: (key: string | null) => void;
@@ -12,6 +13,28 @@ interface Props {
 
 const MAX_SECONDS = 15;
 const MIN_SECONDS = 3;
+
+const AUDIO_EXTENSIONS: Record<string, string> = {
+  "audio/webm": "webm",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/wave": "wav",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/aac": "aac",
+  "audio/ogg": "ogg",
+  "audio/flac": "flac",
+};
+
+/** Derive the saved sample's extension from its real type (falling back to the filename). */
+function extensionForType(type: string, name?: string): string {
+  const key = (type || "").split(";")[0].trim().toLowerCase();
+  if (AUDIO_EXTENSIONS[key]) return AUDIO_EXTENSIONS[key];
+  const fromName = name?.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
+  return fromName || "webm";
+}
 
 function qualityLabel(score: number) {
   if (score >= 80) return { text: "Good", cls: "text-green-700 bg-green-50 border-green-200" };
@@ -31,6 +54,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
   const previewUrlRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mountedRef = useRef(true);
+  const tooShortRef = useRef(false);
 
   const [mode, setMode] = useState<"record" | "upload">("record");
   const [recording, setRecording] = useState(false);
@@ -40,6 +64,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
   const [done, setDone] = useState(false);
   const [level, setLevel] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewExt, setPreviewExt] = useState("webm");
   const [analysis, setAnalysis] = useState<ReferenceAnalysis | null>(null);
 
   const setPreview = (url: string | null) => {
@@ -104,12 +129,20 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
         stopLevelMeter();
         stream.getTracks().forEach((t) => t.stop());
         if (!mountedRef.current) return;
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        if (tooShortRef.current) {
+          // Recording was rejected for being too short — discard the chunks.
+          chunksRef.current = [];
+          return;
+        }
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+        const ext = extensionForType(blob.type);
+        setPreviewExt(ext);
         setPreview(URL.createObjectURL(blob));
-        await handleUpload(blob, "reference.webm", "audio/webm");
+        await handleUpload(blob, `reference.${ext}`, blob.type || "audio/webm");
       };
       mr.start();
       mediaRecorderRef.current = mr;
+      tooShortRef.current = false;
       setAnalysis(null);
       setRecording(true);
       setDone(false);
@@ -126,6 +159,10 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
 
   const stop = () => {
     if (mediaRecorderRef.current && recording) {
+      if (secondsRef.current < MIN_SECONDS) {
+        tooShortRef.current = true;
+        setError(`Recording is only ${secondsRef.current}s. Please record at least ${MIN_SECONDS}s of clear speech.`);
+      }
       mediaRecorderRef.current.stop();
       setRecording(false);
       if (timerRef.current) clearInterval(timerRef.current);
@@ -182,9 +219,17 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
 
   const handleFile = async (file: File) => {
     setError(null);
-    setPreview(URL.createObjectURL(file));
+    setAnalysis(null);
+    const duration = await getMediaDuration(file, "audio");
+    if (duration > 0 && duration < MIN_SECONDS) {
+      setError(`That file is only ${duration.toFixed(1)}s. Please upload at least ${MIN_SECONDS}s of clear speech.`);
+      return;
+    }
     const ct = file.type || "audio/wav";
-    await handleUpload(file, file.name || "reference.wav", ct);
+    const ext = extensionForType(ct, file.name);
+    setPreviewExt(ext);
+    setPreview(URL.createObjectURL(file));
+    await handleUpload(file, file.name || `reference.${ext}`, ct);
   };
 
   const clearVoice = () => {
@@ -195,6 +240,8 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
     setError(null);
     setAnalysis(null);
     setPreview(null);
+    setPreviewExt("webm");
+    tooShortRef.current = false;
   };
 
   const progress = Math.min((seconds / MAX_SECONDS) * 100, 100);
@@ -343,6 +390,21 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
             <span className="text-xs opacity-80">({Math.round(analysis.quality_score)}/100)</span>
             {analysis.clipping && <span className="text-xs font-medium">Audio may be too loud (clipping)</span>}
           </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 text-[11px] font-mono">
+            {[
+              { label: "duration", value: analysis.duration, digits: 2, suffix: "s" },
+              { label: "rms", value: analysis.rms, digits: 3 },
+              { label: "peak", value: analysis.peak, digits: 3 },
+              { label: "crest_db", value: analysis.crest_db, digits: 1 },
+              { label: "snr_db", value: analysis.snr_db, digits: 1 },
+              { label: "sample_rate", value: analysis.sample_rate, digits: 0, suffix: " Hz" },
+            ].map((m) => (
+              <div key={m.label} className="rounded border bg-white/60 px-2 py-1">
+                <div className="opacity-70">{m.label}</div>
+                <div className="font-semibold">{m.value == null ? "—" : `${Number(m.value).toFixed(m.digits)}${m.suffix || ""}`}</div>
+              </div>
+            ))}
+          </div>
           {analysis.hints.length > 0 && (
             <ul className="list-disc pl-5 space-y-1 text-sm">
               {analysis.hints.slice(0, 3).map((hint, i) => <li key={i}>{hint}</li>)}
@@ -355,7 +417,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
         <div className="rounded-lg border bg-gray-50 p-3 space-y-2">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <p className="text-sm font-medium text-gray-700">Listen to your sample</p>
-            <a href={previewUrl} download="voice-sample.webm" className="text-sm text-blue-600 hover:underline shrink-0">
+            <a href={previewUrl} download={`voice-sample.${previewExt}`} className="text-sm text-blue-600 hover:underline shrink-0">
               Save sample
             </a>
           </div>

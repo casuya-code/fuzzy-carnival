@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SynthesizeResponse, SynthesizeRequest, synthesize, transformAudio } from "@/lib/api";
+import { ENGINE_LABEL, Engine, SynthesizeResponse, SynthesizeRequest, synthesize, transformAudio } from "@/lib/api";
 
 interface Props {
   result: SynthesizeResponse | null;
@@ -13,15 +13,6 @@ interface Props {
 }
 
 const SPEEDS = [0.75, 1, 1.25, 1.5];
-
-const engineLabel: Record<string, string> = {
-  kyutai: "English Voice Clone",
-  afrispeech: "English (African Accent)",
-  msingi: "Swahili Voice Clone",
-  mms: "Swahili (Basic Voice)",
-  azure: "Swahili Natural Voice",
-  elevenlabs: "Expressive Voice (Online)",
-};
 
 export default function AudioPlayer({ result, history = [], onSelect, lastReq, onRegenerated, onRemove }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -65,7 +56,7 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
     try {
       const req: SynthesizeRequest = { ...lastReq, skip_cache: true };
       const res = await synthesize(req);
-      onRegenerated?.(res, lastReq);
+      onRegenerated?.(res, req);
     } catch (e: any) {
       setRegenError(e?.message || "Could not create another version.");
     } finally {
@@ -102,7 +93,7 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
   }
 
   const filenameBase = `speech-${result.engine_used}-${(result.audio_r2_key.split("/").pop() || "audio").replace(/\.[^.]+$/, "")}`;
-  const friendlyEngine = engineLabel[result.engine_used] || result.engine_used;
+  const friendlyEngine = ENGINE_LABEL[result.engine_used as Engine] || result.engine_used;
 
   return (
     <div className="space-y-4">
@@ -268,7 +259,9 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
           <div className="space-y-2">
             {history.map((h, i) => {
               const active = h.audio_url === result.audio_url;
-              const name = engineLabel[h.engine_used] || h.engine_used;
+              // history is newest-first: the newest take gets the highest version number.
+              const version = history.length - i;
+              const name = ENGINE_LABEL[h.engine_used as Engine] || h.engine_used;
               return (
                 <div
                   key={h.audio_url}
@@ -282,13 +275,13 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
                         {active && <span className="text-xs font-medium text-blue-700">Now playing</span>}
                       </div>
                       <div className="mt-0.5 text-sm text-gray-600">
-                        {h.duration_seconds ? `${h.duration_seconds.toFixed(1)} seconds` : "Audio"} · Version {i + 1}
+                        {h.duration_seconds ? `${h.duration_seconds.toFixed(1)} seconds` : "Audio"} · Version {version}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <a
                         href={h.audio_url}
-                        download={`${filenameBase}-v${i + 1}.mp3`}
+                        download={`${filenameBase}-v${version}.mp3`}
                         onClick={(e) => e.stopPropagation()}
                         className="rounded-md border border-gray-300 px-2.5 py-1 text-xs sm:text-sm text-gray-700 hover:bg-gray-100"
                       >

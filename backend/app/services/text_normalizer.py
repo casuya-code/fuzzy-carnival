@@ -1,7 +1,8 @@
 import json
-import os
 import re
 from pathlib import Path
+
+from app.config import SWAHILI_LOANWORDS_PATH
 
 _SW_DIGITS = {
     "0": "sifuri", "1": "moja", "2": "mbili", "3": "tatu", "4": "nne",
@@ -24,7 +25,7 @@ def _load_loanwords() -> dict[str, str]:
     _LOANWORDS = {}
     # Custom loanword/pronunciation dictionary for Swahili TTS (e.g. {"AI": "A I", "YouTube": "Yutubu"})
     candidates = []
-    env_path = os.getenv("SWAHILI_LOANWORDS_PATH", "").strip()
+    env_path = SWAHILI_LOANWORDS_PATH.strip()
     if env_path:
         candidates.append(Path(env_path))
     base = Path(__file__).resolve().parents[1]

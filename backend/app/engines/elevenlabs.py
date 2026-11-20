@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import threading
 import uuid
 from pathlib import Path
@@ -14,10 +15,13 @@ from app.config import (
     TEMP_AUDIO_DIR,
 )
 from app.engines.base import BaseTTSEngine
+from app.services.path_utils import mp3_output_path as _mp3_path
 from app.services.timeline_service import (
     extract_audio_bytes_from_elevenlabs_timestamps_response,
     extract_timeline_from_elevenlabs_timestamps_response,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ElevenLabsQuotaExceededError(RuntimeError):
@@ -26,13 +30,6 @@ class ElevenLabsQuotaExceededError(RuntimeError):
 
 class ElevenLabsCloningUnavailableError(RuntimeError):
     """Raised when Instant Voice Cloning is not available for the account/plan."""
-
-
-def _mp3_path(path: str) -> str:
-    p = Path(path)
-    if p.suffix.lower() == ".mp3":
-        return str(p)
-    return str(p.with_suffix(".mp3"))
 
 
 class ElevenLabsEngine(BaseTTSEngine):
@@ -58,15 +55,16 @@ class ElevenLabsEngine(BaseTTSEngine):
                 data = json.loads(self._voice_cache_path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     self._voice_cache = {str(k): str(v) for k, v in data.items() if v}
-        except Exception:
+        except Exception as e:
+            logger.warning("Could not load ElevenLabs voice cache %s: %s", self._voice_cache_path, e)
             self._voice_cache = {}
 
     def _save_voice_cache(self) -> None:
         try:
             self._voice_cache_path.parent.mkdir(parents=True, exist_ok=True)
             self._voice_cache_path.write_text(json.dumps(self._voice_cache, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Could not save ElevenLabs voice cache %s: %s", self._voice_cache_path, e)
 
     def _client_or_raise(self) -> ElevenLabs:
         if not ELEVENLABS_API_KEY:
@@ -226,7 +224,8 @@ class ElevenLabsEngine(BaseTTSEngine):
                         if timeline:
                             self._last_timeline = timeline
                             self._last_timeline_source = "provider"
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("ElevenLabs timeline extraction failed: %s", e)
                         self._last_timeline = None
                         self._last_timeline_source = None
                     return output_path
@@ -281,8 +280,8 @@ class ElevenLabsEngine(BaseTTSEngine):
                             self._voice_cache.pop(cache_key, None)
                             self._save_voice_cache()
                         continue
-                    except Exception:
-                        pass
+                    except Exception as evict_error:
+                        logger.warning("Could not evict invalid ElevenLabs voice cache entry: %s", evict_error)
 
                 if not ELEVENLABS_API_KEY:
                     raise RuntimeError("ElevenLabs is not configured (set ELEVENLABS_API_KEY)")

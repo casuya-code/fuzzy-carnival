@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PackageResult, previewThumbnail, publishPackage, detectBpm } from "@/lib/api";
-import { addDeliverable, loadVideoHistory, VideoHistoryItem } from "@/lib/history";
+import { type Language, PackageResult, previewThumbnail, publishPackage, detectBpm } from "@/lib/api";
+import { addDeliverable, loadSpeechHistory, loadVideoHistory, VideoHistoryItem } from "@/lib/history";
 import { getMediaDuration } from "@/lib/media";
 
 type SourceMode = "history" | "device";
@@ -12,7 +12,7 @@ type Gradient = "left" | "bottom";
 export default function PublishPackagePage() {
   const [sourceMode, setSourceMode] = useState<SourceMode>("history");
   const [topic, setTopic] = useState("Untitled");
-  const [language] = useState("en");
+  const [language, setLanguage] = useState<Language>("en");
   const [videoHistory, setVideoHistory] = useState<VideoHistoryItem[]>([]);
   const [selectedVideoUrl, setSelectedVideoUrl] = useState("");
   const [masterFile, setMasterFile] = useState<File | null>(null);
@@ -41,7 +41,13 @@ export default function PublishPackagePage() {
   useEffect(() => {
     const list = loadVideoHistory();
     setVideoHistory(list);
-    if (list.length) setSelectedVideoUrl(list[0].video_url);
+    if (list.length) {
+      setSelectedVideoUrl(list[0].video_url);
+      if (list[0].language) setLanguage(list[0].language);
+      if (list[0].topic) setTopic(list[0].topic);
+    }
+    const speech = loadSpeechHistory().find((s) => s.language);
+    if (speech?.language) setLanguage(speech.language);
     try {
       const t = localStorage.getItem("projectTopic");
       if (t) setTopic(t);
@@ -61,7 +67,8 @@ export default function PublishPackagePage() {
 
   const fitShorts = (duration: number) => {
     if (!duration || duration < 15) return;
-    const len = Math.max(5, Math.min(40, Math.floor(duration / 3)));
+    // Backend allows 5–180s (MAX_CLIP_LENGTH_SEC); match the slider's 180s cap.
+    const len = Math.max(5, Math.min(180, Math.floor(duration / 3)));
     setClipLength(len);
     setStarts([0, Math.round(duration / 3), Math.round(2 * duration / 3)]);
   };
@@ -73,7 +80,7 @@ export default function PublishPackagePage() {
       const cycle = r.cycle_sec || 2;
       const snap = (x: number) => Math.max(0, Math.round(x / cycle) * cycle);
       const dur = selectedVideo.duration_seconds;
-      setClipLength(Math.max(5, Math.min(40, snap(Math.floor(dur / 3)))));
+      setClipLength(Math.max(5, Math.min(180, snap(Math.floor(dur / 3)))));
       setStarts([0, snap(Math.round(dur / 3)), snap(Math.round((2 * dur) / 3))]);
     } catch (e: any) {
       setError(e?.message || "Beat detection failed");
@@ -83,6 +90,8 @@ export default function PublishPackagePage() {
   const chooseHistory = (url: string) => {
     setSelectedVideoUrl(url);
     const v = videoHistory.find((x) => x.video_url === url);
+    if (v?.language) setLanguage(v.language);
+    if (v?.topic) setTopic(v.topic);
     if (v?.duration_seconds) fitShorts(v.duration_seconds);
     setThumb(null); setResult(null);
   };
@@ -111,6 +120,7 @@ export default function PublishPackagePage() {
     setError(null); setResult(null);
     if (!sourceReady) { setError("Select a master video (from history or device)."); return; }
     if (!hookWords.trim()) { setError("Enter a 3-word viral hook."); return; }
+    if (hookWords.trim().split(/\s+/).length > 3) { setError("Use at most 3 words for the hook (only the first 3 are drawn)."); return; }
     setProcessing(true);
     try {
       const r = await publishPackage({
@@ -135,7 +145,8 @@ export default function PublishPackagePage() {
     }
   };
 
-  const hookArray = hookWords.trim().split(/\s+/).slice(0, 3);
+  const hookArray = hookWords.trim().split(/\s+/).filter(Boolean).slice(0, 3);
+  const fileCount = (result?.shorts.length ?? 3) + 2;
   const segColor = ["bg-blue-200", "bg-purple-200", "bg-amber-200"];
 
   return (
@@ -149,7 +160,7 @@ export default function PublishPackagePage() {
         </div>
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
           {[
-            { label: "Files out", value: "5" },
+            { label: "Files out", value: fileCount },
             { label: "Thumbnail", value: "1280×720" },
             { label: "Shorts", value: "3 × 9:16" },
             { label: "Master T", value: knownDuration ? `${knownDuration.toFixed(0)}s` : "—" },
@@ -207,19 +218,28 @@ export default function PublishPackagePage() {
               <h2 className="text-base sm:text-lg font-semibold">② Thumbnail design (Pillow)</h2>
               <span className="text-[11px] font-mono text-gray-400">sharp frame ⊕ gradient ⊕ 3-word hook</span>
             </div>
-            <div className="space-y-2">
-              <label className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Project topic (for R2 file naming)</label>
-              <input value={topic} onChange={(e) => { setTopic(e.target.value); try { localStorage.setItem("projectTopic", e.target.value); } catch {} }} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" placeholder="Kilimanjaro story" />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Project topic (for R2 file naming)</label>
+                <input value={topic} onChange={(e) => { setTopic(e.target.value); try { localStorage.setItem("projectTopic", e.target.value); } catch {} }} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" placeholder="Kilimanjaro story" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Language</label>
+                <select value={language} onChange={(e) => setLanguage(e.target.value as Language)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm">
+                  <option value="en">English (en)</option>
+                  <option value="sw">Swahili (sw)</option>
+                </select>
+              </div>
             </div>
             <div className="space-y-2">
               <label className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Viral hook (3 words)</label>
-              <input value={hookWords} onChange={(e) => { setHookWords(e.target.value); setThumb(null); }} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold uppercase" placeholder="AFRICA'S HIGHEST PEAK" />
+              <input value={hookWords} onChange={(e) => { setHookWords(e.target.value.trim().split(/\s+/).slice(0, 3).join(" ")); setThumb(null); }} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold uppercase" placeholder="AFRICA'S HIGHEST PEAK" />
               <div className="flex flex-wrap gap-1.5">
                 <button type="button" onClick={() => setHookWords("AFRICA'S HIGHEST PEAK")} className="rounded border px-2 py-1 text-[11px] hover:bg-gray-50">🇹🇿 Highest peak</button>
                 <button type="button" onClick={() => setHookWords("SIRI YA KILIMANJARO")} className="rounded border px-2 py-1 text-[11px] hover:bg-gray-50">🇹🇿 Siri ya Kilimanjaro</button>
-                <button type="button" onClick={() => setHookWords("YOU WON'T BELIEVE THIS")} className="rounded border px-2 py-1 text-[11px] hover:bg-gray-50">🇬🇧 Viral hook</button>
+                <button type="button" onClick={() => setHookWords("YOU WON'T BELIEVE")} className="rounded border px-2 py-1 text-[11px] hover:bg-gray-50">🇬🇧 Viral hook</button>
               </div>
-              <p className="text-[11px] text-gray-400 font-mono">hook = [{hookArray.map((w) => w.toUpperCase()).join(", ")}] · last word gets the badge</p>
+              <p className="text-[11px] text-gray-400 font-mono">hook = [{hookArray.map((w) => w.toUpperCase()).join(", ")}] · last word gets the badge (max 3 words)</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -280,6 +300,9 @@ export default function PublishPackagePage() {
               {sourceMode === "history" && selectedVideo?.video_r2_key && (
                 <button type="button" onClick={fitToBeats} className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">🎵 Beat-sync starts</button>
               )}
+              {sourceMode === "device" && (
+                <p className="text-[11px] text-gray-400">Beat-sync needs an R2 key; device masters use local storage and cannot be beat-synced.</p>
+              )}
             </div>
             <div className="overflow-x-auto rounded-lg border">
               <table className="min-w-full text-xs sm:text-sm">
@@ -313,7 +336,7 @@ export default function PublishPackagePage() {
           <section className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between gap-2 border-b pb-2">
               <h2 className="text-base sm:text-lg font-semibold">④ Package manifest</h2>
-              <span className="text-[11px] font-mono text-gray-400">5 files → R2</span>
+              <span className="text-[11px] font-mono text-gray-400">{fileCount} files → R2</span>
             </div>
 
             <div className="rounded-lg border p-3 space-y-2">
@@ -339,7 +362,7 @@ export default function PublishPackagePage() {
                   <tr><th className="px-2 py-2 text-left">#</th><th className="px-2 py-2 text-left">File</th><th className="px-2 py-2 text-left hidden sm:table-cell">Formula</th><th className="px-2 py-2 text-right">Spec</th></tr>
                 </thead>
                 <tbody className="divide-y">
-                  <tr className="bg-white"><td className="px-2 py-2 font-mono text-gray-400">1</td><td className="px-2 py-2 font-medium">youtube_master_16x9.mp4</td><td className="px-2 py-2 font-mono text-gray-500 hidden sm:table-cell">M ⊕ voice ⊕ ducked music</td><td className="px-2 py-2 text-right font-mono">1920×1080</td></tr>
+                  <tr className="bg-white"><td className="px-2 py-2 font-mono text-gray-400">1</td><td className="px-2 py-2 font-medium">youtube_master_16x9.mp4</td><td className="px-2 py-2 font-mono text-gray-500 hidden sm:table-cell">M ⊕ voice ⊕ ducked music</td><td className="px-2 py-2 text-right font-mono">{upscale2k ? "2560×1440" : "1920×1080"}</td></tr>
                   <tr className="bg-gray-50/40"><td className="px-2 py-2 font-mono text-gray-400">2</td><td className="px-2 py-2 font-medium">youtube_thumbnail.jpg</td><td className="px-2 py-2 font-mono text-gray-500 hidden sm:table-cell">argmax_sharp(F) ⊕ grad ⊕ hook</td><td className="px-2 py-2 text-right font-mono">1280×720</td></tr>
                   {[0, 1, 2].map((i) => (
                     <tr key={i} className={i % 2 ? "bg-gray-50/40" : "bg-white"}>
@@ -365,7 +388,7 @@ export default function PublishPackagePage() {
         {error && <p className="rounded-md bg-red-50 border border-red-100 p-2 text-sm text-red-700">{error}</p>}
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={publish} disabled={processing || !sourceReady || !hookWords.trim()} className="rounded-md bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed">
-            {processing ? "Packaging 5 files… (FFmpeg + Pillow)" : "🚀 Publish Package"}
+            {processing ? `Packaging ${fileCount} files… (FFmpeg + Pillow)` : "🚀 Publish Package"}
           </button>
           <span className="text-[11px] text-gray-400 font-mono">thumbnail → 3 center-crop shorts → upload all to R2</span>
         </div>
@@ -374,8 +397,8 @@ export default function PublishPackagePage() {
         {result && (
           <div className="rounded-lg bg-green-50 border border-green-200 p-4 space-y-4">
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <p className="text-sm font-semibold text-green-800">✅ 5 files ready to post</p>
-              <span className="text-xs font-mono text-green-700 bg-green-100 px-2 py-0.5 rounded">pkg={result.package_id.slice(0, 8)} · T={result.duration_seconds?.toFixed(0)}s</span>
+              <p className="text-sm font-semibold text-green-800">✅ {fileCount} files ready to post</p>
+              <span className="text-xs font-mono text-green-700 bg-green-100 px-2 py-0.5 rounded">pkg={result.package_id.slice(0, 8)} · T={result.duration_seconds ? `${result.duration_seconds.toFixed(0)}s` : "—"}</span>
             </div>
 
             <div className="grid gap-4 lg:grid-cols-3">
@@ -383,11 +406,15 @@ export default function PublishPackagePage() {
                 <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">YouTube thumbnail</div>
                 {/* eslint-disable-next-line @next/next/no-img-element -- dynamic backend/R2 URL, not a static asset */}
                 <img src={result.thumbnail_url} alt="Final YouTube thumbnail" className="w-full rounded-lg border shadow-sm" />
+                <p className="text-[11px] font-mono text-gray-500">
+                  {result.thumbnail.width}×{result.thumbnail.height} · hook: {result.thumbnail.hook_words.join(" / ")}
+                </p>
                 <a href={result.thumbnail_url} download="youtube_thumbnail.jpg" className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">⬇ Thumbnail JPG</a>
               </div>
               <div className="space-y-2 lg:col-span-2">
                 <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Master film (16:9)</div>
                 <video controls src={result.master_url} className="w-full rounded-lg bg-black max-h-64" />
+                <p className="text-[11px] font-mono text-gray-500">{upscale2k ? "2560×1440" : "1920×1080"}</p>
                 <a href={result.master_url} download="youtube_master_16x9.mp4" className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">⬇ Master MP4</a>
               </div>
             </div>
@@ -399,7 +426,7 @@ export default function PublishPackagePage() {
                   <div key={s.part} className="rounded-lg border bg-white p-2 space-y-2">
                     <div className="flex items-center justify-between text-[11px] font-mono text-gray-500">
                       <span>PART {s.part} · {phases[s.part - 1]}</span>
-                      <span>t={s.start_sec}s +{s.length_sec}s</span>
+                      <span>t={s.start_sec}s +{s.length_sec}s · {s.aspect_ratio}</span>
                     </div>
                     <video controls src={s.url} className="w-full rounded-lg bg-black max-h-72" />
                     <a href={s.url} download={`short_part_${s.part}_9x16.mp4`} className="inline-block rounded-md border border-gray-300 px-2.5 py-1 text-[11px] text-gray-700 hover:bg-gray-100">⬇ Short {s.part}</a>

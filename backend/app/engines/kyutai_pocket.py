@@ -1,7 +1,6 @@
 import os
-from pathlib import Path
 import numpy as np
-from app.config import WEIGHTS_DIR, HF_TOKEN
+from app.config import TEMP_AUDIO_DIR, WEIGHTS_DIR, HF_TOKEN
 from app.engines.base import BaseTTSEngine
 
 
@@ -42,7 +41,7 @@ class KyutaiPocketEngine(BaseTTSEngine):
         import scipy.io.wavfile
 
         if output_path is None:
-            output_path = str(Path(__file__).resolve().parents[3] / "temp_audio" / "kyutai_out.wav")
+            output_path = str(TEMP_AUDIO_DIR / "kyutai_out.wav")
 
         import copy
         if reference_audio_path:

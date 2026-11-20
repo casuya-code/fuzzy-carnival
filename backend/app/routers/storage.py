@@ -1,3 +1,4 @@
+import logging
 import shutil
 import uuid
 from pathlib import Path
@@ -27,6 +28,21 @@ from app.services.beat_sync_processor import (
 from app.services.r2_storage import download_reference, upload_output
 
 router = APIRouter(prefix="/api/v1", tags=["storage"])
+logger = logging.getLogger(__name__)
+
+
+def _cleanup_dir(path: Path) -> None:
+    try:
+        shutil.rmtree(path)
+    except Exception as e:
+        logger.warning("Cleanup failed for %s: %s", path, e)
+
+
+def _cleanup_file(path: str | Path) -> None:
+    try:
+        Path(path).unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning("Could not remove temporary file %s: %s", path, e)
 
 
 def _safe_local_path(key: str) -> Path:
@@ -105,7 +121,7 @@ def mix(req: MixRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Mix failed: {e}")
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        _cleanup_dir(work_dir)
 
 
 class TransformRequest(BaseModel):
@@ -137,7 +153,7 @@ def transform(req: TransformRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transform failed: {e}")
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        _cleanup_dir(work_dir)
 
 
 class AnalyzeRequest(BaseModel):
@@ -159,10 +175,7 @@ def analyze(req: AnalyzeRequest):
         raise HTTPException(status_code=500, detail=f"Analyze failed: {e}")
     finally:
         if path and Path(path).name.startswith("analyze_"):
-            try:
-                Path(path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            _cleanup_file(path)
 
 
 class BpmRequest(BaseModel):
@@ -186,7 +199,4 @@ def bpm(req: BpmRequest):
         raise HTTPException(status_code=500, detail=f"BPM detection failed: {e}")
     finally:
         if path and Path(path).name.startswith("bpm_"):
-            try:
-                Path(path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            _cleanup_file(path)

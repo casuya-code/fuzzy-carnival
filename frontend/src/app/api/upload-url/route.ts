@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { API_BASE } from "@/lib/api";
-import { createPresignedUploadUrl } from "@/lib/r2";
+import { createPresignedUploadUrl, r2Configured } from "@/lib/r2";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,13 +14,11 @@ export async function POST(req: NextRequest) {
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
     const key = `references/${Date.now()}-${safeName}`;
 
-    const accountId = process.env.R2_ACCOUNT_ID;
-    const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-
     // Local dev fallback: upload directly to backend when R2 is not configured
-    if (!accountId || !accessKeyId || !secretAccessKey) {
-      const upload_url = `${API_BASE}/api/v1/local-upload/${encodeURIComponent(key)}`;
+    if (!r2Configured) {
+      // Encode each path segment separately so "/" stays a path separator.
+      const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+      const upload_url = `${API_BASE}/api/v1/local-upload/${encodedKey}`;
       return NextResponse.json({ upload_url, key });
     }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { mixAudio, uploadLocalBlob } from "@/lib/api";
+import { mixAudio, requestUploadUrl, uploadToR2 } from "@/lib/api";
 import { fmtSize } from "@/lib/format";
 import {
   addSpeechHistory,
@@ -246,8 +246,13 @@ export default function SpeechAndBackgroundPage() {
 
   const uploadTrackToBackend = async (track: AudioTrack) => {
     const ext = trackExtension(track);
-    const key = `audio_library/${track.id}.${ext}`;
-    return uploadLocalBlob(key, track.blob, track.type || `audio/${ext}`);
+    const contentType = track.type || `audio/${ext}`;
+    // Use the same R2-first path as voice samples. The upload-url route falls
+    // back to the backend's local upload when R2 is not configured, and the
+    // backend resolves either kind of key when mixing.
+    const { upload_url, key } = await requestUploadUrl(`${track.id}.${ext}`, contentType);
+    await uploadToR2(upload_url, track.blob, contentType);
+    return key;
   };
 
   const handleMerge = async () => {
@@ -287,6 +292,13 @@ export default function SpeechAndBackgroundPage() {
           audio_url: res.audio_url,
           engine_used: layers === "L1" ? "mastered (L1)" : `mixed (${layers})`,
           duration_seconds: res.duration_seconds,
+          // Carry the source speech metadata forward so captions can reuse the
+          // original script/language/topic from this mixed output too.
+          source_text: speech.source_text,
+          timeline: speech.timeline,
+          timeline_source: speech.timeline_source,
+          language: speech.language,
+          topic: speech.topic,
         };
         setSpeeches(addSpeechHistory(entry));
       }
@@ -554,7 +566,7 @@ export default function SpeechAndBackgroundPage() {
                 </table>
               </div>
             )}
-            <p className="text-[11px] text-gray-400">Auto-synced from Text-to-Speech history.</p>
+            <p className="text-[11px] text-gray-400">Loaded when this page opens — refresh the page to pick up newer takes from Text-to-Speech.</p>
           </div>
         </div>
 

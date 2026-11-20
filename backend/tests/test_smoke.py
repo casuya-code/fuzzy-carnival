@@ -4,9 +4,10 @@ import os
 
 os.environ["PATH"] = r"C:\Users\Admin\ffmpeg;" + os.environ.get("PATH", "")
 
-from fastapi.testclient import TestClient
+# PATH setup above must run before importing the app (ffmpeg discovery).
+from fastapi.testclient import TestClient  # noqa: E402
 
-from app.main import app
+from app.main import app  # noqa: E402
 
 client = TestClient(app)
 

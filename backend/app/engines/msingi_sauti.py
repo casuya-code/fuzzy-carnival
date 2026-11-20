@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from app.config import WEIGHTS_DIR, HF_TOKEN
+from app.config import MSINGI_CHECKPOINT_PATH, MSINGI_LANGUAGE, TEMP_AUDIO_DIR, WEIGHTS_DIR
 from app.engines.base import BaseTTSEngine
 
 # Coqui XTTS prompts for license acceptance on first use. In a server process
@@ -48,8 +48,8 @@ class MsingiSautiEngine(BaseTTSEngine):
         super().__init__()
         self.weights_dir = WEIGHTS_DIR / "msingi-sauti"
         self.weights_dir.mkdir(parents=True, exist_ok=True)
-        self.custom_checkpoint = os.getenv("MSINGI_CHECKPOINT_PATH", "")
-        self.language_override = os.getenv("MSINGI_LANGUAGE", "auto").strip().lower()
+        self.custom_checkpoint = MSINGI_CHECKPOINT_PATH
+        self.language_override = MSINGI_LANGUAGE.strip().lower()
         self.last_warning: str | None = None
 
     def load(self) -> None:
@@ -129,7 +129,7 @@ class MsingiSautiEngine(BaseTTSEngine):
         self.ensure_loaded()
         self.last_warning = None
         if output_path is None:
-            output_path = str(Path(__file__).resolve().parents[3] / "temp_audio" / "msingi_out.wav")
+            output_path = str(TEMP_AUDIO_DIR / "msingi_out.wav")
 
         language = self._resolve_language()
         if language == "en" and "sw" not in self._model_languages():

@@ -4,16 +4,40 @@ export const API_BASE = (
 ).replace(/\/+$/, "");
 
 export type Engine = "kyutai" | "afrispeech" | "msingi" | "mms" | "azure" | "elevenlabs";
+export type Language = "en" | "sw";
+
+/** Shared UI labels and engine availability — keep all engine pickers in sync. */
+export const ENGINE_LABEL: Record<Engine, string> = {
+  kyutai: "English Voice Clone",
+  afrispeech: "English (African Accent)",
+  msingi: "Swahili Voice Clone",
+  mms: "Swahili (Basic Voice)",
+  azure: "Swahili Natural Voice",
+  elevenlabs: "Expressive Voice (Online)",
+};
+
+export const ENGINES_BY_LANGUAGE: Record<Language, Engine[]> = {
+  en: ["kyutai", "afrispeech", "elevenlabs"],
+  sw: ["azure", "msingi", "mms", "elevenlabs"],
+};
+
+export const DEFAULT_ENGINE: Record<Language, Engine> = {
+  en: "kyutai",
+  sw: "azure",
+};
+
+/** One shared cap so every history surface shows the same version count. */
+export const HISTORY_LIMIT = 20;
 
 export interface SynthesizeRequest {
   text: string;
-  language: "en" | "sw";
+  language: Language;
   engine: Engine;
   voice_r2_key?: string | null;
   topic?: string;
   skip_cache?: boolean;
   denoise_ref?: boolean;
-  /** Delivery pace: <1 slower, >1 faster (VITS engines only). */
+  /** Delivery pace: <1 slower, >1 faster. Only VITS-based engines (e.g. MMS) apply it. */
   speaking_rate?: number;
 }
 
@@ -34,12 +58,17 @@ export interface SynthesizeResponse {
   timeline?: TimelineSegment[] | null;
   timeline_source?: "provider" | "alignment" | "estimated" | "unavailable" | string | null;
   source_text?: string | null;
+  /** Client-only: the exact request that produced this take, restored when selected. */
+  request?: SynthesizeRequest;
 }
 
 export interface HealthResponse {
   status: string;
   awake: boolean;
   loaded_models?: string[];
+  /** Non-secret engine/capability flags from the backend, used only for status details. */
+  engines?: string[];
+  capabilities?: Record<string, boolean>;
 }
 
 function extractDetail(text: string): string {
@@ -279,6 +308,8 @@ export interface VideoBatchResult {
   duration_seconds?: number;
   clips_processed?: number;
   intermediate?: boolean;
+  bpm?: number;
+  zoom_synced?: boolean;
 }
 
 export async function processVideoBatch(payload: {
@@ -287,6 +318,10 @@ export async function processVideoBatch(payload: {
   trim_end_sec: number;
   topic?: string;
   language?: string;
+  /** Forward the selected audio so batch jobs use the same beat-synced zoom as /process. */
+  audio?: File | null;
+  audio_r2_key?: string | null;
+  bpm?: number | null;
 }): Promise<VideoBatchResult> {
   const fd = new FormData();
   payload.clips.forEach((c) => fd.append("clips", c, c.name));
@@ -294,6 +329,9 @@ export async function processVideoBatch(payload: {
   fd.append("trim_end_sec", String(payload.trim_end_sec));
   if (payload.topic) fd.append("topic", payload.topic);
   if (payload.language) fd.append("language", payload.language);
+  if (payload.audio) fd.append("audio", payload.audio, payload.audio.name);
+  if (payload.audio_r2_key) fd.append("audio_r2_key", payload.audio_r2_key);
+  if (payload.bpm != null) fd.append("bpm", String(payload.bpm));
   const res = await fetch(`${API_BASE}/api/v1/video/process-batch`, {
     method: "POST",
     body: fd,
@@ -391,22 +429,6 @@ export async function processVideo(payload: {
     throw new Error(detail || `Video processing failed (${res.status})`);
   }
   return res.json();
-}
-
-export async function processCaptionedVideo(payload: {
-  clips: File[];
-  audio?: File | null;
-  audio_r2_key?: string | null;
-  script_text: string;
-  intro_delay_sec: number;
-  outro_sec: number;
-  aspect_ratio: string;
-  words_per_chunk: number;
-  trim_end_sec: number;
-  upscale_2k?: boolean;
-  loudnorm?: boolean;
-}): Promise<VideoProcessResult> {
-  return processVideo(payload);
 }
 
 export interface PackageResult {

@@ -60,6 +60,9 @@ export default function SpeechTimelineSidebar({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Only reset local state for a different take. initialTimeline/sourceText are
+  // starting values — editing a timeline updates them via onTimelineChange, and
+  // re-running this effect would wipe prompts, script, playback and messages.
   useEffect(() => {
     const segs = initialTimeline || [];
     setSegments(segs);
@@ -71,7 +74,7 @@ export default function SpeechTimelineSidebar({
     const derived = sourceText || (segs.length ? segs.map((s) => s.text).join(" ") : "");
     setScriptText(derived);
     setShowScript(!derived);
-  }, [audioUrl, audioKey, sourceText, initialTimeline, initialSource]);
+  }, [audioUrl, audioKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => {

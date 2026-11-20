@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Any, Optional, Literal
+from typing import Optional, Literal
 
 EngineType = Literal["kyutai", "afrispeech", "msingi", "mms", "azure", "elevenlabs"]
 LanguageType = Literal["en", "sw"]
@@ -42,3 +42,6 @@ class HealthResponse(BaseModel):
     status: str
     awake: bool = True
     loaded_models: list[str] = []
+    # Non-secret runtime capabilities so the UI can explain which engines are ready.
+    engines: list[str] = []
+    capabilities: dict[str, bool] = {}

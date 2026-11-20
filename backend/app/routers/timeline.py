@@ -1,4 +1,4 @@
-import tempfile
+import logging
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -15,6 +15,7 @@ from app.services.timeline_service import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["timeline"])
+logger = logging.getLogger(__name__)
 
 
 class TimelineRequest(BaseModel):
@@ -66,7 +67,8 @@ def build_timeline(req: TimelineRequest):
                         warning=None,
                     )
                 warning = "Alignment did not produce usable timestamps. Used estimated timeline instead."
-            except Exception:
+            except Exception as e:
+                logger.warning("ElevenLabs forced alignment failed: %s", e, exc_info=True)
                 warning = "Alignment unavailable. Used estimated timeline instead."
 
         # Fallback: heuristic timeline from script + audio duration (works without external services).
@@ -97,7 +99,7 @@ def build_timeline(req: TimelineRequest):
                 # remove dir if empty
                 try:
                     work_dir.rmdir()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    logger.debug("Could not remove timeline work dir %s: %s", work_dir, e)
+        except Exception as e:
+            logger.warning("Timeline cleanup failed for %s: %s", work_dir, e)

@@ -41,6 +41,11 @@ def _local_key_path(key: str) -> Path | None:
     return candidate
 
 
+def local_output_path(key: str) -> Path | None:
+    """Local-dev path for a logical key, preserving its subdirectories."""
+    return _local_key_path(key)
+
+
 def _content_type(path: str) -> str:
     ext = Path(path).suffix.lower()
     if ext == ".mp3":
@@ -63,7 +68,11 @@ def _content_type(path: str) -> str:
 def public_url(key: str) -> str:
     """Return a fresh URL for an already-uploaded object (never cache presigned URLs)."""
     if not _r2_configured():
-        return f"{PUBLIC_BASE_URL}/static/outputs/{Path(key).name}"
+        local = _local_key_path(key)
+        if local is None:
+            raise ValueError("Invalid object key")
+        relative = local.relative_to(TEMP_AUDIO_DIR.resolve()).as_posix()
+        return f"{PUBLIC_BASE_URL}/static/{relative}"
     if R2_PUBLIC_URL:
         return f"{R2_PUBLIC_URL.rstrip('/')}/{key}"
     return _client().generate_presigned_url(
@@ -93,8 +102,8 @@ def download_reference(key: str, dest: Path | None = None) -> str:
             shutil.copyfile(local, dest)
         return str(dest)
 
-    # 2) Local-dev outputs are stored as TEMP_AUDIO_DIR/outputs/<basename>
-    #    regardless of the logical key path.
+    # 2) Legacy local-dev outputs were flattened to TEMP_AUDIO_DIR/outputs/<basename>.
+    #    Still readable so existing artifacts keep working.
     outputs_local = (TEMP_AUDIO_DIR / "outputs" / Path(key).name).resolve()
     outputs_root = (TEMP_AUDIO_DIR / "outputs").resolve()
     if outputs_local.is_relative_to(outputs_root) and outputs_local.exists():
@@ -116,11 +125,13 @@ def upload_output(local_path: str, key: str) -> str:
     from the backend's ``/static`` mount so the frontend can still play it.
     """
     if not _r2_configured():
-        out_dir = TEMP_AUDIO_DIR / "outputs"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        dest = out_dir / Path(key).name
-        shutil.copyfile(local_path, dest)
-        return f"{PUBLIC_BASE_URL}/static/outputs/{dest.name}"
+        dest = _local_key_path(key)
+        if dest is None:
+            raise ValueError("Invalid object key")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if Path(local_path).resolve() != dest.resolve():
+            shutil.copyfile(local_path, dest)
+        return public_url(key)
 
     _client().upload_file(
         local_path,

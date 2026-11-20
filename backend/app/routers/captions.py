@@ -1,3 +1,4 @@
+import logging
 import shutil
 import subprocess
 import uuid
@@ -30,6 +31,7 @@ from app.services.captions_processor import (
 from app.services.r2_storage import download_reference, upload_output
 
 router = APIRouter(prefix="/api/v1", tags=["captions"])
+logger = logging.getLogger(__name__)
 
 
 def _validate_aspect(aspect_ratio: str) -> None:
@@ -158,10 +160,14 @@ async def captions_burn(
         url = upload_output(final_path, r2_key)
         ass_key = build_video_r2_key("Captions", language, topic, "ass")
         ass_url = ""
+        warning = None
         try:
             ass_url = upload_output(ass_path, ass_key)
-        except Exception:
+        except Exception as e:
+            # Keep the successfully uploaded video; report the missing sidecar explicitly.
+            logger.warning("ASS upload failed for %s: %s", ass_key, e, exc_info=True)
             ass_key = ""
+            warning = "Captions file could not be uploaded; the video was generated successfully."
 
         timings = time_words(script_text, vd, intro)
         return {
@@ -170,6 +176,7 @@ async def captions_burn(
             "duration_seconds": get_duration(final_path),
             "ass_r2_key": ass_key,
             "ass_url": ass_url,
+            "warning": warning,
             "word_count": len(timings),
             "chunk_count": chunk_count(len(timings), words_per_chunk),
             "voice_duration_seconds": vd,

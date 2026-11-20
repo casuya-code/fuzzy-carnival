@@ -6,9 +6,7 @@ EAT_TZ = ZoneInfo("Africa/Dar_es_Salaam")
 
 ENGINE_CODES = {
     "kyutai": "KYU",
-    "fluent": "KYU",
     "afrispeech": "AFR",
-    "afr": "AFR",
     "msingi": "MSI",
     "mms": "MMS",
     "azure": "AZR",
@@ -17,9 +15,7 @@ ENGINE_CODES = {
 
 LANG_CODES = {
     "en": "ENG",
-    "english": "ENG",
     "sw": "SWA",
-    "swahili": "SWA",
 }
 
 

@@ -41,10 +41,11 @@ export default function InstructionManualPage() {
           Simple instructions for each tool. Use the menu on the left to open a tool, or jump to a section below.
         </p>
         <div className="mt-4 max-w-md">
+          <label className="mb-1 block text-xs font-medium text-gray-500">Filter jump list</label>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search help topics..."
+            placeholder="Filter jump list..."
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
           />
         </div>
@@ -76,9 +77,9 @@ export default function InstructionManualPage() {
               <Li><b>Create Speech</b> — type text and get spoken audio in English or Swahili.</Li>
               <Li><b>Add Music & Sounds</b> — mix your voice with background music or ambient sound.</Li>
               <Li><b>Edit Video</b> — trim clips, add gentle zoom, and attach your audio.</Li>
-              <Li><b>Add Captions</b> — put words on your video so people can follow along.</Li>
+              <Li><b>Add Captions</b> — burn words from your narration script onto your video so people can follow along (it does not transcribe audio).</Li>
               <Li><b>Ready to Post</b> — make a thumbnail and short clips from your final video.</Li>
-              <Li><b>My Files</b> — find your recent results in one place.</Li>
+              <Li><b>My Files</b> — find your recent video deliverables (edited videos, captions, thumbnails, and packages) in one place.</Li>
             </ul>
           </Section>
 
@@ -86,7 +87,7 @@ export default function InstructionManualPage() {
             <ul className="space-y-1.5">
               <Li>Use the <b>menu on the left</b> to move between tools. On phones, tap <b>Menu</b>.</Li>
               <Li>A common order is: <b>Create Speech → Add Music & Sounds → Edit Video → Add Captions → Ready to Post</b>.</Li>
-              <Li>Your results are saved in <b>My Files</b> so you can reuse or download them later (on this device/browser).</Li>
+              <Li>Your video results are saved in <b>My Files</b> so you can reuse or download them later (on this device/browser). Generated speech and mixes are kept separately for reuse in the audio tools.</Li>
               <Li>If the app says it is waking up, wait a little for the first action to finish.</Li>
             </ul>
           </Section>
@@ -112,7 +113,7 @@ export default function InstructionManualPage() {
               <Li><b>Voice (main):</b> choose a voice recording you made or upload one. The final length usually follows this voice track.</Li>
               <Li><b>Background sound (optional):</b> add ambience like nature or crowd sounds.</Li>
               <Li><b>Music (optional):</b> add music behind your voice. The app can lower the music while someone is speaking so the voice stays clear.</Li>
-              <Li>You can save audio files to your browser library to reuse them later, then click <b>Mix & Export</b> to create the final audio.</Li>
+              <Li>You can save audio files to your browser library to reuse them later, then click <b>🔀 Mix / Master &amp; Export</b> to create the final audio.</Li>
             </ul>
           </Section>
 
@@ -128,12 +129,12 @@ export default function InstructionManualPage() {
           </Section>
 
           <Section id="captions" title="Add Captions">
-            <p>Add on-screen words to your video so viewers can read along.</p>
+            <p>Add on-screen words to your video so viewers can read along. Captions are built from the narration script you type — the app does not transcribe audio automatically.</p>
             <ul className="space-y-1.5">
               <Li><b>Choose your video:</b> upload a video or pick one from your saved files.</Li>
-              <Li><b>Choose the audio to transcribe:</b> use the video’s audio or select a different audio track.</Li>
-              <Li><b>Adjust style:</b> change text size, colors, and position to keep captions easy to read.</Li>
-              <Li><b>Preview first:</b> check how captions look, then create the final video with captions burned in.</Li>
+              <Li><b>Enter the matching script:</b> paste the exact words that are spoken (or load the script saved with a speech take). Word timings are estimated from the script and the voice duration; saved speech timelines are not re-sent, so the backend re-estimates them.</Li>
+              <Li><b>Adjust timing:</b> change intro delay, outro pad, voice duration, aspect ratio, and words per chunk. The caption style (font size, colors, outline, and safe-zone position) is set by the preset and cannot be changed here.</Li>
+              <Li><b>Preview first:</b> check the timing table, then create the final video with captions burned in.</Li>
             </ul>
           </Section>
 
@@ -149,7 +150,7 @@ export default function InstructionManualPage() {
 
           <Section id="history" title="My Files">
             <p>
-              <b>My Files</b> keeps your recent results on this device/browser, grouped by type. You can preview, open, download, or remove items from the list.
+              <b>My Files</b> keeps your recent video deliverables on this device/browser, grouped by type: edited videos, captioned videos, thumbnails, and ready-to-post packages. You can preview, open, download, or remove items from the list. Generated speech and mixes are not shown here; they are kept in the audio tools for reuse.
             </p>
             <p className="text-gray-600">If you clear browser data or use a different device/browser, this list may be empty. Download important files to keep them safe.</p>
           </Section>
@@ -171,7 +172,7 @@ export default function InstructionManualPage() {
               <Li><b>Smarter pauses</b> — the reader now breathes after sentences, catches briefly at commas, and leaves a longer beat at paragraph breaks, instead of using one flat gap everywhere.</Li>
               <Li><b>Swahili text clean-up</b> — numbers, dates and times are converted to spoken Swahili automatically, and missing end-of-sentence punctuation is added so long passages no longer run on.</Li>
               <Li><b>Standard file naming</b> — saved files are named with your project name and a date folder so they sort logically.</Li>
-              <Li><b>My Files</b> — a single place for your recent speech, mixes, edited videos, captions and publish packages.</Li>
+              <Li><b>My Files</b> — a single place for your recent video deliverables: edited videos, captions, thumbnails and publish packages (speech/mixes live in the audio tools).</Li>
             </ul>
           </Section>
         </div>
