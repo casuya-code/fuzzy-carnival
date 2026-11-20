@@ -16,7 +16,9 @@ def _load_dotenv(path: Path) -> None:
     """
     if not path.exists():
         return
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    # utf-8-sig strips a leading BOM; otherwise the first key (often HF_TOKEN)
+    # is parsed as "\ufeffHF_TOKEN" and silently ignored.
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

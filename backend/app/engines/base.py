@@ -11,6 +11,8 @@ class BaseTTSEngine(ABC):
     def __init__(self):
         self._loaded = False
         self.model = None
+        # Non-fatal notices (e.g. a cloning fallback) surfaced by the synthesize router.
+        self.last_warning: str | None = None
 
     @property
     def is_loaded(self) -> bool:
