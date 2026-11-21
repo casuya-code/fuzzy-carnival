@@ -48,6 +48,8 @@ class ModelManager:
         self._lock = threading.RLock()
         # Unload other engines before loading one heavier than this budget slice.
         self._heavy_ram_gb = min(HEAVY_ENGINE_RAM_GB, MAX_RAM_GB)
+        self._warmup_status: dict[str, str] = {}
+        self._warmup_errors: dict[str, str] = {}
 
     def get(self, name: str) -> BaseTTSEngine:
         with self._lock:
@@ -72,18 +74,32 @@ class ModelManager:
         """Warm small default engines in a background thread (non-blocking)."""
 
         def _warm():
-            try:
-                if KYUTAI_WARM and ENABLE_KYUTAI:
-                    self.get("kyutai")
-            except Exception:
-                pass
-            try:
-                if WARM_MMS and ENABLE_MMS:
-                    self.get("mms")
-            except Exception:
-                pass
+            for name, enabled, should_warm in (
+                ("kyutai", ENABLE_KYUTAI, KYUTAI_WARM),
+                ("mms", ENABLE_MMS, WARM_MMS),
+            ):
+                if not enabled or not should_warm:
+                    continue
+                self._warmup_status[name] = "warming"
+                try:
+                    self.get(name)
+                    self._warmup_status[name] = "ready"
+                    self._warmup_errors.pop(name, None)
+                except Exception as e:
+                    self._warmup_status[name] = "failed"
+                    self._warmup_errors[name] = str(e)
 
         threading.Thread(target=_warm, daemon=True).start()
+
+    def warmup_status(self) -> dict[str, dict[str, str]]:
+        with self._lock:
+            out: dict[str, dict[str, str]] = {}
+            for name, status in self._warmup_status.items():
+                item = {"status": status}
+                if name in self._warmup_errors:
+                    item["error"] = self._warmup_errors[name]
+                out[name] = item
+            return out
 
     def _unload(self, name: str) -> None:
         try:

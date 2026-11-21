@@ -41,7 +41,9 @@ class SynthesizeResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     awake: bool = True
+    ready: bool = True
     loaded_models: list[str] = []
     # Non-secret runtime capabilities so the UI can explain which engines are ready.
     engines: list[str] = []
     capabilities: dict[str, bool] = {}
+    issues: list[str] = []

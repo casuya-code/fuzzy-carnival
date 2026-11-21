@@ -65,10 +65,18 @@ app.mount("/static", StaticFiles(directory=str(TEMP_AUDIO_DIR)), name="static")
 @app.get("/health", response_model=HealthResponse)
 def health():
     loaded: list[str] = []
+    issues: list[str] = []
+    warmup: dict[str, dict[str, str]] = {}
     try:
-        loaded = synthesize.get_manager().loaded_models()
+        manager = synthesize.get_manager()
+        loaded = manager.loaded_models()
+        warmup = manager.warmup_status()
+        for name, info in warmup.items():
+            if info.get("status") == "failed":
+                issues.append(f"warmup:{name}: {info.get('error', 'failed')}")
     except Exception as e:
         logger.warning("Health check could not list loaded models: %s", e, exc_info=True)
+        issues.append(f"health:{e}")
 
     engine_flags = {
         "kyutai": ENABLE_KYUTAI,
@@ -81,6 +89,7 @@ def health():
     return HealthResponse(
         status="ok",
         awake=True,
+        ready=True,
         loaded_models=loaded,
         engines=[name for name in ENGINE_NAMES if engine_flags.get(name, False)],
         capabilities={
@@ -88,6 +97,7 @@ def health():
             "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
             "elevenlabs_cloning": bool(ELEVENLABS_API_KEY and ELEVENLABS_ENABLE_CLONING),
         },
+        issues=issues,
     )
 
 

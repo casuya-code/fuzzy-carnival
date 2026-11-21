@@ -151,9 +151,7 @@ cd backend
 python scripts/download_weights.py
 ```
 
-Weights are gitignored. The Dockerfile already runs this prefetch at build
-time; outside Docker, run it manually before deploying (or let models download
-on first request).
+Weights are gitignored. The Dockerfile prefetches weights at build time. If gated Hugging Face models are needed during build, pass a BuildKit secret instead of a build arg/env: `docker build --secret id=hf_token,env=HF_TOKEN ...` (or `src=...`). Outside Docker, run the script manually before deploying (or let models download on first request).
 
 ## 3. Frontend (Vercel)
 

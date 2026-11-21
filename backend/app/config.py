@@ -1,11 +1,64 @@
 """Single source of truth for environment/config and shared defaults."""
 
+import logging
 import os
+import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEIGHTS_DIR = BASE_DIR / "weights"
 TEMP_AUDIO_DIR = BASE_DIR / "temp_audio"
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    val = raw.strip().lower()
+    if val in {"1", "true", "yes", "on"}:
+        return True
+    if val in {"0", "false", "no", "off"}:
+        return False
+    logger.warning("Invalid boolean for %s=%r; using default=%s", name, raw, default)
+    return default
+
+
+def _env_int(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        val = int(raw.strip())
+    except ValueError:
+        logger.warning("Invalid integer for %s=%r; using default=%s", name, raw, default)
+        return default
+    if min_value is not None and val < min_value:
+        logger.warning("Out-of-range integer for %s=%r; using default=%s", name, raw, default)
+        return default
+    if max_value is not None and val > max_value:
+        logger.warning("Out-of-range integer for %s=%r; using default=%s", name, raw, default)
+        return default
+    return val
+
+
+def _env_float(name: str, default: float, *, min_value: float | None = None, max_value: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        val = float(raw.strip())
+    except ValueError:
+        logger.warning("Invalid float for %s=%r; using default=%s", name, raw, default)
+        return default
+    if min_value is not None and val < min_value:
+        logger.warning("Out-of-range float for %s=%r; using default=%s", name, raw, default)
+        return default
+    if max_value is not None and val > max_value:
+        logger.warning("Out-of-range float for %s=%r; using default=%s", name, raw, default)
+        return default
+    return val
 
 
 def _load_dotenv(path: Path) -> None:
@@ -63,8 +116,8 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("
 
 # --- Memory guard -----------------------------------------------------------------
 # Railway $5 = ~8GB; keep headroom by unloading heavy engines before loading another.
-MAX_RAM_GB = float(os.getenv("MAX_RAM_GB", "7.0"))
-HEAVY_ENGINE_RAM_GB = float(os.getenv("HEAVY_ENGINE_RAM_GB", "3.0"))
+MAX_RAM_GB = _env_float("MAX_RAM_GB", 7.0, min_value=0.5)
+HEAVY_ENGINE_RAM_GB = _env_float("HEAVY_ENGINE_RAM_GB", 3.0, min_value=0.0)
 
 # --- CORS -------------------------------------------------------------------------
 # Exact origins go to allow_origins; wildcard subdomains go to allow_origin_regex
@@ -77,17 +130,26 @@ _raw_origins = [
     if o.strip()
 ]
 CORS_ALLOW_ORIGINS = [o for o in _raw_origins if "*" not in o]
-CORS_ORIGIN_REGEX = r"https://.*\.vercel\.app" if any("*" in o for o in _raw_origins) else None
+_cors_regex_env = os.getenv("CORS_ORIGIN_REGEX", "").strip()
+if _cors_regex_env:
+    try:
+        re.compile(_cors_regex_env)
+        CORS_ORIGIN_REGEX = _cors_regex_env
+    except re.error as e:
+        logger.warning("Invalid CORS_ORIGIN_REGEX=%r (%s); falling back to default", _cors_regex_env, e)
+        CORS_ORIGIN_REGEX = r"https://.*\.vercel\.app" if any("*" in o for o in _raw_origins) else None
+else:
+    CORS_ORIGIN_REGEX = r"https://.*\.vercel\.app" if any("*" in o for o in _raw_origins) else None
 
 # --- Model flags ------------------------------------------------------------------
-ENABLE_KYUTAI = os.getenv("ENABLE_KYUTAI", "true").lower() == "true"
-ENABLE_AFRISPEECH = os.getenv("ENABLE_AFRISPEECH", "true").lower() == "true"
-ENABLE_MSINGI = os.getenv("ENABLE_MSINGI", "true").lower() == "true"
-ENABLE_MMS = os.getenv("ENABLE_MMS", "true").lower() == "true"
-ENABLE_AZURE = os.getenv("ENABLE_AZURE", "true").lower() == "true"
-ENABLE_ELEVENLABS = os.getenv("ENABLE_ELEVENLABS", "true").lower() == "true"
-KYUTAI_WARM = os.getenv("KYUTAI_WARM", "true").lower() == "true"
-WARM_MMS = os.getenv("WARM_MMS", "true").lower() == "true"
+ENABLE_KYUTAI = _env_bool("ENABLE_KYUTAI", True)
+ENABLE_AFRISPEECH = _env_bool("ENABLE_AFRISPEECH", True)
+ENABLE_MSINGI = _env_bool("ENABLE_MSINGI", True)
+ENABLE_MMS = _env_bool("ENABLE_MMS", True)
+ENABLE_AZURE = _env_bool("ENABLE_AZURE", True)
+ENABLE_ELEVENLABS = _env_bool("ENABLE_ELEVENLABS", True)
+KYUTAI_WARM = _env_bool("KYUTAI_WARM", True)
+WARM_MMS = _env_bool("WARM_MMS", True)
 
 # Swahili MMS checkpoint. Any VITS/MMS-shaped repo with its own tokenizer works.
 # Benchmarked on a 4-sentence Swahili passage (voiced% / peak):
@@ -101,7 +163,7 @@ AFRISPEECH_CONFIG = os.getenv("AFRISPEECH_CONFIG", "")
 MSINGI_CHECKPOINT_PATH = os.getenv("MSINGI_CHECKPOINT_PATH", "")
 MSINGI_LANGUAGE = os.getenv("MSINGI_LANGUAGE", "auto").strip().lower()
 SWAHILI_LOANWORDS_PATH = os.getenv("SWAHILI_LOANWORDS_PATH", "").strip()
-PREFETCH_STRICT = os.getenv("PREFETCH_STRICT", "").strip().lower() in {"1", "true", "yes"}
+PREFETCH_STRICT = _env_bool("PREFETCH_STRICT", False)
 
 ENGINE_NAMES = ("kyutai", "afrispeech", "msingi", "mms", "azure", "elevenlabs")
 
@@ -114,31 +176,31 @@ AZURE_ENGLISH_VOICE = os.getenv("AZURE_ENGLISH_VOICE", "en-US-AriaNeural")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 ELEVENLABS_DEFAULT_VOICE_ID = os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "nPczCjzI2devNBz1zQrb")
-ELEVENLABS_ENABLE_CLONING = os.getenv("ELEVENLABS_ENABLE_CLONING", "false").lower() == "true"
+ELEVENLABS_ENABLE_CLONING = _env_bool("ELEVENLABS_ENABLE_CLONING", False)
 
 # --- Audio processing -------------------------------------------------------------
-DENOISE_REFERENCE = os.getenv("DENOISE_REFERENCE", "true").lower() == "true"
+DENOISE_REFERENCE = _env_bool("DENOISE_REFERENCE", True)
 
 # --- Caption / video shared defaults ---------------------------------------------
-DEFAULT_INTRO_SEC = float(os.getenv("DEFAULT_INTRO_SEC", "1.5"))
-MAX_INTRO_SEC = float(os.getenv("MAX_INTRO_SEC", "60"))
-DEFAULT_OUTRO_SEC = float(os.getenv("DEFAULT_OUTRO_SEC", "2.5"))
-MAX_OUTRO_SEC = float(os.getenv("MAX_OUTRO_SEC", "10"))
-DEFAULT_WORDS_PER_CHUNK = int(os.getenv("DEFAULT_WORDS_PER_CHUNK", "3"))
-MAX_WORDS_PER_CHUNK = int(os.getenv("MAX_WORDS_PER_CHUNK", "8"))
-DEFAULT_TRIM_END_SEC = float(os.getenv("DEFAULT_TRIM_END_SEC", "0.5"))
-MAX_TRIM_END_SEC = float(os.getenv("MAX_TRIM_END_SEC", "5.0"))
+DEFAULT_INTRO_SEC = _env_float("DEFAULT_INTRO_SEC", 1.5, min_value=0.0)
+MAX_INTRO_SEC = _env_float("MAX_INTRO_SEC", 60.0, min_value=0.0)
+DEFAULT_OUTRO_SEC = _env_float("DEFAULT_OUTRO_SEC", 2.5, min_value=0.0)
+MAX_OUTRO_SEC = _env_float("MAX_OUTRO_SEC", 10.0, min_value=0.0)
+DEFAULT_WORDS_PER_CHUNK = _env_int("DEFAULT_WORDS_PER_CHUNK", 3, min_value=1)
+MAX_WORDS_PER_CHUNK = _env_int("MAX_WORDS_PER_CHUNK", 8, min_value=1)
+DEFAULT_TRIM_END_SEC = _env_float("DEFAULT_TRIM_END_SEC", 0.5, min_value=0.0)
+MAX_TRIM_END_SEC = _env_float("MAX_TRIM_END_SEC", 5.0, min_value=0.0)
 
 # --- Packaging --------------------------------------------------------------------
-DEFAULT_CLIP_LENGTH_SEC = int(os.getenv("DEFAULT_CLIP_LENGTH_SEC", "40"))
-MIN_CLIP_LENGTH_SEC = int(os.getenv("MIN_CLIP_LENGTH_SEC", "5"))
-MAX_CLIP_LENGTH_SEC = int(os.getenv("MAX_CLIP_LENGTH_SEC", "180"))
+DEFAULT_CLIP_LENGTH_SEC = _env_int("DEFAULT_CLIP_LENGTH_SEC", 40, min_value=1)
+MIN_CLIP_LENGTH_SEC = _env_int("MIN_CLIP_LENGTH_SEC", 5, min_value=1)
+MAX_CLIP_LENGTH_SEC = _env_int("MAX_CLIP_LENGTH_SEC", 180, min_value=1)
 
 # --- Social-ready video export defaults ------------------------------------------
 # Balanced for YouTube / Instagram / Facebook after platform re-compression.
-SOCIAL_VIDEO_CRF = int(os.getenv("SOCIAL_VIDEO_CRF", "22"))
+SOCIAL_VIDEO_CRF = _env_int("SOCIAL_VIDEO_CRF", 22, min_value=0, max_value=51)
 SOCIAL_VIDEO_PRESET = os.getenv("SOCIAL_VIDEO_PRESET", "veryfast")
 SOCIAL_AUDIO_BITRATE = os.getenv("SOCIAL_AUDIO_BITRATE", "160k")
-SOCIAL_AUDIO_RATE = int(os.getenv("SOCIAL_AUDIO_RATE", "44100"))
+SOCIAL_AUDIO_RATE = _env_int("SOCIAL_AUDIO_RATE", 44100, min_value=8000)
 SOCIAL_MAXRATE = os.getenv("SOCIAL_MAXRATE", "12M")
 SOCIAL_BUFSIZE = os.getenv("SOCIAL_BUFSIZE", "24M")

@@ -65,10 +65,12 @@ export interface SynthesizeResponse {
 export interface HealthResponse {
   status: string;
   awake: boolean;
+  ready?: boolean;
   loaded_models?: string[];
   /** Non-secret engine/capability flags from the backend, used only for status details. */
   engines?: string[];
   capabilities?: Record<string, boolean>;
+  issues?: string[];
 }
 
 function extractDetail(text: string): string {

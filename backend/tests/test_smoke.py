@@ -1,15 +1,17 @@
 """Lightweight smoke tests for the backend API."""
 
-import os
+import shutil
 
-os.environ["PATH"] = r"C:\Users\Admin\ffmpeg;" + os.environ.get("PATH", "")
+import pytest
+from fastapi.testclient import TestClient
 
-# PATH setup above must run before importing the app (ffmpeg discovery).
-from fastapi.testclient import TestClient  # noqa: E402
-
-from app.main import app  # noqa: E402
+from app.main import app
 
 client = TestClient(app)
+
+
+def _ffmpeg_available() -> bool:
+    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
 def test_health():
@@ -39,4 +41,7 @@ def test_packaging_clip_length_validation():
         "/api/v1/packaging/publish",
         data={"hook_words": "A B C", "clip_length_sec": "181"},
     )
+    # Endpoint validates media tools before payload in some deployments; accept 503 when ffmpeg is absent.
+    if r.status_code == 503 and not _ffmpeg_available():
+        pytest.skip("ffmpeg/ffprobe not available")
     assert r.status_code in (400, 422)
