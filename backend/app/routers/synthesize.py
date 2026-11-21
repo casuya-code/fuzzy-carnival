@@ -278,10 +278,9 @@ def _run_synthesis(
     speaking_rate: float | None = None,
 ) -> str:
     # Azure/ElevenLabs: single cloud call (text already normalized; length <= 2000)
-    if engine_name in CLOUD_ENGINES:
-        # Prefer explicit language-aware method for Azure when available
-        if engine_name == "azure" and hasattr(engine, "synthesize_for_language"):
-            return engine.synthesize_for_language(text=text, language=language, output_path=raw_out)
+    if engine_name == "azure":
+        return engine.synthesize_for_language(text=text, language=language, output_path=raw_out)
+    if engine_name == "elevenlabs":
         return engine.synthesize(text=text, reference_audio_path=ref_path, output_path=raw_out)
 
     if engine_name == "msingi" and len(text) > 400:

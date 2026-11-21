@@ -287,4 +287,5 @@ class ElevenLabsEngine(BaseTTSEngine):
                     raise RuntimeError("ElevenLabs is not configured (set ELEVENLABS_API_KEY)")
                 raise RuntimeError(f"ElevenLabs TTS failed: {e}")
 
-        raise RuntimeError("ElevenLabs TTS failed: unknown error")
+        # Unreachable: the loop above always returns or raises on every path.
+        raise RuntimeError("ElevenLabs TTS failed: exhausted retry attempts")

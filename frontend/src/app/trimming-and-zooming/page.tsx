@@ -203,7 +203,7 @@ export default function TrimmingAndZoomingPage() {
             { label: "Clips (n)", value: clips.length },
             { label: "Trim (t)", value: `${trimEndSec.toFixed(1)}s` },
             { label: "Aspect (r)", value: aspectRatio },
-            { label: "Zoom (fixed)", value: "2.5s" },
+            { label: "Zoom", value: "auto/beat" },
           ].map((m) => (
             <div key={m.label} className="rounded-lg border bg-gradient-to-b from-gray-50 to-white px-2 py-2">
               <div className="text-[10px] uppercase tracking-wide text-gray-400">{m.label}</div>
@@ -283,7 +283,7 @@ export default function TrimmingAndZoomingPage() {
               </table>
             </div>
           )}
-          <p className="text-[11px] text-gray-400">Each clip: trim last <span className="font-mono">{trimEndSec}s</span> (tail warp) + 2.5s dynamic zoom (1.0→1.12×), then stitch in order.</p>
+          <p className="text-[11px] text-gray-400">Each clip: trim last <span className="font-mono">{trimEndSec}s</span> (tail warp) + dynamic zoom (1.0→1.12×), then stitch in order. When audio is attached, zoom follows the detected beat cycle; otherwise a fixed 2.5s cycle is used.</p>
         </section>
 
         {/* Audio + settings */}
@@ -335,10 +335,10 @@ export default function TrimmingAndZoomingPage() {
                   <td className="px-3 py-3 text-right font-mono tabular-nums">{language}</td>
                 </tr>
                 <tr className="bg-gray-50/40">
-                  <td className="px-3 py-3 font-medium text-gray-800">Zoom cycle (fixed)</td>
+                  <td className="px-3 py-3 font-medium text-gray-800">Zoom cycle</td>
                   <td className="px-3 py-3 font-mono text-gray-500">z</td>
-                  <td className="px-3 py-3 text-xs text-gray-500">Fixed pipeline behavior — 1.0→1.12× every 75 frames (30 fps); not adjustable here</td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums">2.5 s</td>
+                  <td className="px-3 py-3 text-xs text-gray-500">Automatic: beat-synced to the attached audio when available, otherwise a fixed 2.5s cycle (1.0→1.12×). Not adjustable here.</td>
+                  <td className="px-3 py-3 text-right font-mono tabular-nums">Auto</td>
                 </tr>
               </tbody>
             </table>

@@ -6,6 +6,7 @@ import {
   DEFAULT_ENGINE,
   Engine,
   ENGINE_LABEL,
+  ENGINES_BY_LANGUAGE,
   HealthResponse,
   HISTORY_LIMIT,
   SynthesizeRequest,
@@ -118,6 +119,20 @@ export default function TextToSpeechPage() {
           : null)
     );
   };
+
+  // Keep the selected engine valid for the current language and enabled backend engines.
+  useEffect(() => {
+    const allowed = new Set(ENGINES_BY_LANGUAGE[language]);
+    const available = health?.engines ? new Set(health.engines) : null;
+    const isValid = (e: Engine) => allowed.has(e) && (!available || available.has(e));
+    if (!isValid(engine)) {
+      const preferred = DEFAULT_ENGINE[language];
+      const fallback = isValid(preferred)
+        ? preferred
+        : (ENGINES_BY_LANGUAGE[language].find((e: Engine) => isValid(e)) ?? preferred);
+      setEngine(fallback);
+    }
+  }, [language, engine, health?.engines]);
 
   useEffect(() => {
     let cancelled = false;
@@ -252,7 +267,12 @@ export default function TextToSpeechPage() {
               denoiseRef={denoiseRef}
               onDenoiseChange={handleDenoiseChange}
             />
-            <EngineSelector engine={engine} onChange={setEngine} language={language} />
+            <EngineSelector
+              engine={engine}
+              onChange={setEngine}
+              language={language}
+              availableEngines={health?.engines ?? null}
+            />
           </div>
           <div className="space-y-6 min-w-0">
             <TextToSpeechForm

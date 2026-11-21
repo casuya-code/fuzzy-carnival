@@ -29,7 +29,14 @@ def _patch_xtts_audio_loader() -> None:
         import torchaudio.functional as audio_functional
         from TTS.tts.models import xtts as xtts_module
         import soundfile as sf
-    except Exception:
+    except Exception as e:
+        # Non-fatal: load/synthesis may still work on environments where torchaudio
+        # can read the reference audio directly. Log so failures aren't opaque.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Could not patch XTTS audio loader (soundfile/torch/TTS unavailable): %s", e
+        )
         return
 
     def _load_audio(audiopath, sampling_rate):

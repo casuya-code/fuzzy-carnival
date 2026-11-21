@@ -130,8 +130,9 @@ def _denoise(data: np.ndarray, sr: int) -> np.ndarray:
         else:
             reduced = reduced.astype(np.float32)
         return reduced
-    except Exception:
-        # If denoise fails or lib unavailable, return original
+    except Exception as e:
+        # If denoise fails or lib unavailable, return original but leave a trace.
+        logger.warning("Reference denoise skipped (%s); using original audio", e)
         return data
 
 

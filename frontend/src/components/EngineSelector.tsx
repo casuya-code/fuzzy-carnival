@@ -6,6 +6,8 @@ interface Props {
   engine: Engine;
   onChange: (e: Engine) => void;
   language: Language;
+  /** Enabled engines reported by /health; when provided, unavailable ones are hidden. */
+  availableEngines?: string[] | null;
 }
 
 type EngineMeta = {
@@ -66,9 +68,12 @@ const ENGINES: EngineMeta[] = [
   },
 ];
 
-export default function EngineSelector({ engine, onChange, language }: Props) {
+export default function EngineSelector({ engine, onChange, language, availableEngines }: Props) {
   const allowed = ENGINES_BY_LANGUAGE[language];
-  const filtered = ENGINES.filter((e) => allowed.includes(e.id));
+  const availableSet = availableEngines ? new Set(availableEngines) : null;
+  const filtered = ENGINES.filter(
+    (e) => allowed.includes(e.id) && (!availableSet || availableSet.has(e.id))
+  );
 
   return (
     <section className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm space-y-4">
@@ -85,7 +90,12 @@ export default function EngineSelector({ engine, onChange, language }: Props) {
       </div>
 
       <div className="space-y-2">
-        {filtered.map((e) => {
+        {filtered.length === 0 ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            No voice engines are available for this language in the current deployment. Check backend configuration.
+          </p>
+        ) : (
+          filtered.map((e) => {
           const selected = engine === e.id;
           return (
             <button
@@ -125,7 +135,8 @@ export default function EngineSelector({ engine, onChange, language }: Props) {
               </div>
             </button>
           );
-        })}
+          })
+        )}
       </div>
 
       {language === "sw" && (

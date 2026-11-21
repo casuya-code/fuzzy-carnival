@@ -4,6 +4,7 @@ Runs on the $5 Railway CPU container with FFmpeg, Pillow and OpenCV (all
 lightweight). No Canva, no CapCut, no GPU.
 """
 
+import logging
 import os
 import shutil
 import subprocess
@@ -188,8 +189,12 @@ def _has_audio(path: str) -> bool:
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
         )
         return bool(res.stdout.strip())
-    except Exception:
-        return True
+    except Exception as e:
+        # If probing fails, avoid mapping a non-existent audio stream in FFmpeg.
+        logging.getLogger(__name__).warning(
+            "Could not probe audio stream for %s (%s); assuming no audio", path, e
+        )
+        return False
 
 
 def _make_banner(path: str, label: str, title: str, accent: str, font_path: str | None) -> None:
