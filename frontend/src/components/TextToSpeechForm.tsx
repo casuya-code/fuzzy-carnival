@@ -223,6 +223,11 @@ export default function TextToSpeechForm({
           <p className="text-xs text-gray-500">
             Lower = more deliberate with longer gaps (good for narration). Higher = quicker delivery.
           </p>
+          <p className={`text-xs ${["mms", "azure"].includes(engine) ? "text-gray-500" : "text-amber-700"}`}>
+            {["mms", "azure"].includes(engine)
+              ? "Pace control is applied by this voice."
+              : "This voice keeps its natural pace right now; pace control applies to Azure Swahili and Basic Swahili (MMS)."}
+          </p>
         </div>
       </div>
 

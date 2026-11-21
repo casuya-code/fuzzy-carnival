@@ -46,13 +46,31 @@ class AzureSwahiliEngine(BaseTTSEngine):
         speaking_rate=None,
     ) -> str:
         """Direct calls default to Swahili; the router uses synthesize_for_language."""
-        return self.synthesize_for_language(text=text, language="sw", output_path=output_path)
+        return self.synthesize_for_language(
+            text=text, language="sw", output_path=output_path, speaking_rate=speaking_rate
+        )
+
+    @staticmethod
+    def _prosody_rate(speaking_rate: float | None) -> str | None:
+        if speaking_rate is None:
+            return None
+        try:
+            rate = float(speaking_rate)
+        except (TypeError, ValueError):
+            return None
+        if abs(rate - 1.0) <= 0.01:
+            return None
+        pct = int(round((rate - 1.0) * 100))
+        pct = max(-40, min(60, pct))
+        sign = "+" if pct >= 0 else ""
+        return f"{sign}{pct}%"
 
     def synthesize_for_language(
         self,
         text: str,
         language: str,
         output_path: str | None = None,
+        speaking_rate: float | None = None,
     ) -> str:
         """Explicit language-aware synthesis (used by router if needed)."""
         if not AZURE_SPEECH_KEY or not AZURE_SPEECH_REGION:
@@ -71,10 +89,14 @@ class AzureSwahiliEngine(BaseTTSEngine):
             lang_tag = m.group(1)
 
         url = f"https://{AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1"
+        body = html.escape(text)
+        rate = self._prosody_rate(speaking_rate)
+        if rate:
+            body = f"<prosody rate='{rate}'>{body}</prosody>"
         ssml = (
             f"<speak version='1.0' xml:lang='{lang_tag}'>"
             f"<voice xml:lang='{lang_tag}' name='{voice}'>"
-            f"{html.escape(text)}"
+            f"{body}"
             f"</voice></speak>"
         )
         headers = {

@@ -26,7 +26,7 @@ Clone voices in **English** and **Swahili** using six TTS engines, deployed on
   - `.` → 480 ms, `!` → 500 ms, `?` → 560 ms (a real breath)
   - `,` → 180 ms, `;` → 240 ms, `:` → 260 ms (a short catch)
   - long segments also break at commas so a 60-word sentence never becomes a sprint
-- **`speaking_rate`** (request field + "Speaking pace" slider, 0.7–1.4) maps to VITS `speaking_rate`: `<1.0` slower/more deliberate, `>1.0` faster. Verified 17.7 s at 0.8 vs 12.2 s at 1.2 on the same text.
+- **`speaking_rate`** (request field + "Speaking pace" slider, 0.7–1.4): applied by **Azure Swahili** (SSML prosody rate) and **Basic Swahili / MMS** (VITS `speaking_rate`). Other engines currently keep their natural pace and the API returns a warning when a non-neutral pace is requested.
 - Swahili text without a trailing `.` is force-terminated, and `;`/`:` are rewritten, so passages don't run on.
 - **Swap the checkpoint** with `MMS_MODEL_ID` (any VITS/MMS repo with its own tokenizer). Benchmarked on a 4-sentence Swahili passage:
 
@@ -52,7 +52,7 @@ Clone voices in **English** and **Swahili** using six TTS engines, deployed on
 | Tool | Route | What it does |
 |---|---|---|
 | Text-to-Speech | `/text-to-speech` | Clean, noise-reduced voice cloning (EN/SW) with previews, variations & rendered exports. |
-| Speech-and-Background | `/speech-and-background` | 3-layer mix: L1 voice, L2 ambient (steady), L3 music (sidechain-ducked) → loudnorm ~−16 LUFS. Voice-only mastering supported. |
+| Speech-and-Background | `/speech-and-background` | 3-layer mix: L1 voice, L2 ambient (steady), L3 music (sidechain-ducked) → loudnorm ~−14 LUFS. Voice-only mastering supported. |
 | Trimming & Zooming | `/trimming-and-zooming` | Trim AI warp tails (`ffprobe`+`-t`), 2.5s `zoompan` punch-in, stitch clips, mux unified audio. |
 | Animated Captions | `/animated-captions` | Karaoke-style word-by-word ASS captions burned with libass, locked into 9:16/1:1/16:9 safe zones. |
 | Publish Package | `/publish-package` | Auto-designed YouTube thumbnail + 3 center-cropped 9:16 Shorts → 5 ready-to-post files in R2. |
@@ -90,14 +90,9 @@ using only FFmpeg, Pillow and OpenCV (headless) — minimal RAM on the CPU conta
 2. **Readability:** dark gradient overlay (left or bottom) + optional 8px accent border.
 3. **3-word hook:** first two words white with heavy shadow, power word in a yellow/
    red/white rounded badge.
-4. **3 Shorts:** center-crop `crop=ih*9/16:ih`, scale to 1080×1920, slice at
-   `tᵢ = 0, 45, 90` (auto-fit to master length in the UI), overlay a top hook banner
-   (`PART i: PHASE`) for the first 5s.
+4. **3 Shorts:** center-crop `crop=ih*9/16:ih`, scale to 1080×1920, slice at requested start times (UI auto-fits to master length), overlay a top hook banner (`PART i: PHASE`) for the first 5s.
 
-`POST /api/v1/packaging/publish` uploads the 5 deliverables:
-`youtube_master_16x9.mp4`, `youtube_thumbnail.jpg`, and
-`short_part_1..3_9x16.mp4`. `POST /api/v1/packaging/thumbnail` generates just the
-thumbnail for a fast preview.
+`POST /api/v1/packaging/publish` uploads the 5 deliverables: master video, `youtube_thumbnail.jpg`, and 3 `short_part_*_9x16.mp4` files. The backend clamps short start/length to the actual master duration to avoid empty/broken shorts. Optional master export can apply loudnorm and an aspect-matched 2K upscale (16:9 → 2560×1440, 9:16 → 1440×2560, 1:1 → 1440×1440). `POST /api/v1/packaging/thumbnail` generates just the thumbnail for a fast preview.
 
 ## Prerequisites
 

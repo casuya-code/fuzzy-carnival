@@ -283,7 +283,7 @@ export default function TrimmingAndZoomingPage() {
               </table>
             </div>
           )}
-          <p className="text-[11px] text-gray-400">Each clip: trim last <span className="font-mono">{trimEndSec}s</span> (tail warp) + dynamic zoom (1.0→1.12×), then stitch in order. When audio is attached, zoom follows the detected beat cycle; otherwise a fixed 2.5s cycle is used.</p>
+          <p className="text-[11px] text-gray-400">Each clip: trim last <span className="font-mono">{trimEndSec}s</span> (tail warp) + dynamic zoom (1.0→1.12× static, 1.0→1.14× beat-synced), then stitch in order. When audio is attached, zoom follows the detected beat cycle; otherwise a fixed 2.5s cycle is used.</p>
         </section>
 
         {/* Audio + settings */}
@@ -337,7 +337,7 @@ export default function TrimmingAndZoomingPage() {
                 <tr className="bg-gray-50/40">
                   <td className="px-3 py-3 font-medium text-gray-800">Zoom cycle</td>
                   <td className="px-3 py-3 font-mono text-gray-500">z</td>
-                  <td className="px-3 py-3 text-xs text-gray-500">Automatic: beat-synced to the attached audio when available, otherwise a fixed 2.5s cycle (1.0→1.12×). Not adjustable here.</td>
+                  <td className="px-3 py-3 text-xs text-gray-500">Automatic: beat-synced to the attached audio when available (1.0→1.14×), otherwise a fixed 2.5s cycle (1.0→1.12×). Not adjustable here.</td>
                   <td className="px-3 py-3 text-right font-mono tabular-nums">Auto</td>
                 </tr>
               </tbody>

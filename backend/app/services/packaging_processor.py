@@ -284,6 +284,35 @@ def export_three_vertical_shorts(
     return short_paths
 
 
+def _video_dims(path: str) -> tuple[int, int] | None:
+    try:
+        res = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path,
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
+        )
+        raw = (res.stdout or "").strip()
+        if "x" in raw:
+            w, h = raw.split("x", 1)
+            return int(w), int(h)
+    except Exception as e:
+        logging.getLogger(__name__).warning("Could not probe video dimensions for %s: %s", path, e)
+    return None
+
+
+def _target_2k_dims(width: int, height: int) -> tuple[int, int]:
+    if width <= 0 or height <= 0:
+        return (2560, 1440)
+    ratio = width / height
+    if ratio >= 1.2:
+        return (2560, 1440)  # landscape
+    if ratio <= 1 / 1.2:
+        return (1440, 2560)  # portrait
+    return (1440, 1440)      # square-ish
+
+
 def reexport_master_video(
     input_path: str,
     output_path: str,
@@ -293,9 +322,10 @@ def reexport_master_video(
     """Re-export a master video with social-ready encoding and optional 2K upscale/loudness normalization."""
     vf_parts = []
     if upscale_2k:
-        # YouTube-oriented 16:9 2K master
-        vf_parts.append("scale=2560:1440:force_original_aspect_ratio=decrease")
-        vf_parts.append("pad=2560:1440:(ow-iw)/2:(oh-ih)/2:black")
+        dims = _video_dims(input_path) or (1920, 1080)
+        tw, th = _target_2k_dims(*dims)
+        vf_parts.append(f"scale={tw}:{th}:force_original_aspect_ratio=decrease")
+        vf_parts.append(f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2:black")
     vf_parts.append("format=yuv420p")
 
     has_audio = _has_audio(input_path)

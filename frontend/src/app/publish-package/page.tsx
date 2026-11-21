@@ -75,9 +75,10 @@ export default function PublishPackagePage() {
   const fitShorts = (duration: number) => {
     if (!duration || duration < 15) return;
     // Backend allows 5–180s (MAX_CLIP_LENGTH_SEC); match the slider's 180s cap.
-    const len = Math.max(5, Math.min(180, Math.floor(duration / 3)));
+    const len = Math.max(5, Math.min(180, Math.floor(duration / 3), Math.floor(duration)));
+    const maxStart = Math.max(0, Math.floor(duration - len));
     setClipLength(len);
-    setStarts([0, Math.round(duration / 3), Math.round(2 * duration / 3)]);
+    setStarts([0, Math.min(maxStart, Math.round(duration / 3)), Math.min(maxStart, Math.round((2 * duration) / 3))]);
   };
 
   const fitToBeats = async () => {
@@ -85,10 +86,12 @@ export default function PublishPackagePage() {
     try {
       const r = await detectBpm(selectedVideo.video_r2_key);
       const cycle = r.cycle_sec || 2;
-      const snap = (x: number) => Math.max(0, Math.round(x / cycle) * cycle);
       const dur = selectedVideo.duration_seconds;
-      setClipLength(Math.max(5, Math.min(180, snap(Math.floor(dur / 3)))));
-      setStarts([0, snap(Math.round(dur / 3)), snap(Math.round((2 * dur) / 3))]);
+      const snap = (x: number) => Math.max(0, Math.min(Math.max(0, dur - 1), Math.round(x / cycle) * cycle));
+      const len = Math.max(5, Math.min(180, snap(Math.floor(dur / 3)), Math.floor(dur)));
+      const maxStart = Math.max(0, Math.floor(dur - len));
+      setClipLength(len);
+      setStarts([0, Math.min(maxStart, snap(Math.round(dur / 3))), Math.min(maxStart, snap(Math.round((2 * dur) / 3)))]);
     } catch (e: any) {
       setError(e?.message || "Beat detection failed");
     }
@@ -358,8 +361,8 @@ export default function PublishPackagePage() {
               <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
                 <input type="checkbox" checked={upscale2k} onChange={(e) => setUpscale2k(e.target.checked)} className="mt-0.5" />
                 <span>
-                  <span className="font-medium">YouTube 2K master upscale</span>
-                  <span className="block text-xs text-gray-500">Export the 16:9 master at 2560×1440 for sharper YouTube delivery. Slower to process.</span>
+                  <span className="font-medium">Master 2K upscale</span>
+                  <span className="block text-xs text-gray-500">Export the master at a higher 2K resolution matched to its aspect ratio (e.g. 2560×1440 for 16:9). Slower to process.</span>
                 </span>
               </label>
             </div>
@@ -369,7 +372,7 @@ export default function PublishPackagePage() {
                   <tr><th className="px-2 py-2 text-left">#</th><th className="px-2 py-2 text-left">File</th><th className="px-2 py-2 text-left hidden sm:table-cell">Formula</th><th className="px-2 py-2 text-right">Spec</th></tr>
                 </thead>
                 <tbody className="divide-y">
-                  <tr className="bg-white"><td className="px-2 py-2 font-mono text-gray-400">1</td><td className="px-2 py-2 font-medium">youtube_master_16x9.mp4</td><td className="px-2 py-2 font-mono text-gray-500 hidden sm:table-cell">M ⊕ voice ⊕ ducked music</td><td className="px-2 py-2 text-right font-mono">{upscale2k ? "2560×1440" : "1920×1080"}</td></tr>
+                  <tr className="bg-white"><td className="px-2 py-2 font-mono text-gray-400">1</td><td className="px-2 py-2 font-medium">master_video.mp4</td><td className="px-2 py-2 font-mono text-gray-500 hidden sm:table-cell">M ⊕ optional 2K/loudnorm export</td><td className="px-2 py-2 text-right font-mono">{upscale2k ? "2K (aspect-matched)" : "Source resolution"}</td></tr>
                   <tr className="bg-gray-50/40"><td className="px-2 py-2 font-mono text-gray-400">2</td><td className="px-2 py-2 font-medium">youtube_thumbnail.jpg</td><td className="px-2 py-2 font-mono text-gray-500 hidden sm:table-cell">argmax_sharp(F) ⊕ grad ⊕ hook</td><td className="px-2 py-2 text-right font-mono">1280×720</td></tr>
                   {[0, 1, 2].map((i) => (
                     <tr key={i} className={i % 2 ? "bg-gray-50/40" : "bg-white"}>
@@ -419,10 +422,14 @@ export default function PublishPackagePage() {
                 <a href={result.thumbnail_url} download="youtube_thumbnail.jpg" className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">⬇ Thumbnail JPG</a>
               </div>
               <div className="space-y-2 lg:col-span-2">
-                <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Master film (16:9)</div>
+                <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Master film</div>
                 <video controls src={result.master_url} className="w-full rounded-lg bg-black max-h-64" />
-                <p className="text-[11px] font-mono text-gray-500">{upscale2k ? "2560×1440" : "1920×1080"}</p>
-                <a href={result.master_url} download="youtube_master_16x9.mp4" className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">⬇ Master MP4</a>
+                <p className="text-[11px] font-mono text-gray-500">
+                  {result.master?.width && result.master?.height
+                    ? `${result.master.width}×${result.master.height}`
+                    : upscale2k ? "2K (aspect-matched)" : "Source resolution"}
+                </p>
+                <a href={result.master_url} download={result.master?.r2_key?.split("/").pop() || "master_video.mp4"} className="inline-block rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">⬇ Master MP4</a>
               </div>
             </div>
 

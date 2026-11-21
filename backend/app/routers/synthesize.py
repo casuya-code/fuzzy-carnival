@@ -491,6 +491,18 @@ def synthesize(req: SynthesizeRequest):
         if not timeline:
             timeline_source = "unavailable"
 
+        # Speaking pace is only applied by engines that implement it. Warn when a
+        # user explicitly requested a non-neutral pace but the effective engine ignored it.
+        pace = req.speaking_rate
+        if pace is not None and abs(float(pace) - 1.0) > 0.01:
+            pace_supported = {"mms", "azure"}
+            if engine_name not in pace_supported:
+                pace_msg = (
+                    f"Speaking pace was requested ({float(pace):.2f}x), but the '{engine_name}' engine "
+                    "keeps its natural pace. Pace control currently applies to Azure and Basic Swahili (MMS)."
+                )
+                warning = f"{warning} {pace_msg}".strip() if warning else pace_msg
+
         result = SynthesizeResponse(
             audio_r2_key=r2_key,
             audio_url=url,

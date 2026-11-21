@@ -407,7 +407,7 @@ export default function SpeechAndBackgroundPage() {
                 <td className="px-3 py-2 font-mono font-semibold text-gray-800">L1</td>
                 <td className="px-3 py-2">Cloned voiceover (EN/SW)</td>
                 <td className="px-3 py-2 text-gray-600">Foreground, clear & upfront</td>
-                <td className="px-3 py-2 text-right font-mono">~ −16 LUFS</td>
+                <td className="px-3 py-2 text-right font-mono">~ −14 LUFS</td>
               </tr>
               <tr className="bg-gray-50/40">
                 <td className="px-3 py-2 font-mono font-semibold text-gray-800">L2</td>
@@ -521,7 +521,7 @@ export default function SpeechAndBackgroundPage() {
               <h3 className="text-sm font-semibold">L1 — Created Voiceovers</h3>
               <span className="rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-mono text-purple-700">n = {speeches.length}</span>
             </div>
-            <p className="text-[11px] text-gray-500">Cloned speech (EN/SW), foreground at ~ −16 LUFS.</p>
+            <p className="text-[11px] text-gray-500">Cloned speech (EN/SW), mastered at ~ −14 LUFS.</p>
             {speeches.length === 0 ? (
               <div className="rounded-lg border border-dashed p-5 text-center text-sm text-gray-400">
                 ∅ &nbsp; No speeches yet. Generate on Text-to-Speech.
@@ -595,7 +595,7 @@ export default function SpeechAndBackgroundPage() {
                 </option>
               ))}
             </select>
-            <div className="text-[11px] text-gray-500 font-mono">clear, upfront · target ~ −16 LUFS</div>
+            <div className="text-[11px] text-gray-500 font-mono">clear, upfront · target ~ −14 LUFS</div>
           </div>
           <div className="rounded-lg border p-3 space-y-2">
             <div className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">L2 — Ambient / Texture (steady)</div>

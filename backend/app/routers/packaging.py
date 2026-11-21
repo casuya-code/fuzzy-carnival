@@ -45,6 +45,38 @@ def _parse_csv_str(value: Optional[str], fallback: list[str]) -> list[str]:
     return parts[:3] or fallback
 
 
+def _probe_video_dims(path: str) -> tuple[int, int] | None:
+    try:
+        res = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path,
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
+        )
+        raw = (res.stdout or "").strip()
+        if "x" in raw:
+            w, h = raw.split("x", 1)
+            w_i, h_i = int(w), int(h)
+            if w_i > 0 and h_i > 0:
+                return w_i, h_i
+    except Exception:
+        return None
+    return None
+
+
+def _master_label(dims: tuple[int, int] | None) -> str:
+    if not dims:
+        return "Video_Master"
+    w, h = dims
+    ratio = w / h if h else 1.0
+    if ratio >= 1.2:
+        return "Video_Master16x9"
+    if ratio <= 1 / 1.2:
+        return "Video_Master9x16"
+    return "Video_Master1x1"
+
+
 def _validate(
     has_video: bool,
     has_key: bool,
@@ -180,8 +212,28 @@ async def packaging_publish(
         )
 
         # 2) Three hook-driven vertical Shorts
-        starts = _parse_csv_float(start_times, DEFAULT_STARTS)
+        master_duration = max(0.0, float(get_duration(export_master) or 0.0))
+        requested_starts = _parse_csv_float(start_times, DEFAULT_STARTS)
         phase_names = _parse_csv_str(phases, DEFAULT_PHASES)
+        clip_length_sec = int(max(MIN_CLIP_LENGTH_SEC, min(MAX_CLIP_LENGTH_SEC, clip_length_sec)))
+        if master_duration > 0:
+            clip_length_sec = max(1, min(clip_length_sec, int(master_duration) if master_duration >= 1 else 1))
+            clip_length_sec = min(clip_length_sec, max(1, int(master_duration)))
+            # Keep clip within master; allow short masters below MIN_CLIP_LENGTH_SEC.
+            if master_duration < clip_length_sec:
+                clip_length_sec = max(1, int(master_duration))
+            max_start = max(0.0, master_duration - float(clip_length_sec))
+            starts = []
+            for s in requested_starts[:3]:
+                ss = max(0.0, min(float(s), max_start))
+                starts.append(round(ss, 3))
+            while len(starts) < 3:
+                starts.append(round(max_start, 3))
+        else:
+            starts = [max(0.0, float(s)) for s in requested_starts[:3]] or DEFAULT_STARTS[:]
+            while len(starts) < 3:
+                starts.append(starts[-1])
+
         shorts_dir = work_dir / "shorts"
         short_paths = export_three_vertical_shorts(
             export_master, str(shorts_dir),
@@ -195,7 +247,9 @@ async def packaging_publish(
 
         # 3) Upload all 5 deliverables to R2 (or /static in local dev)
         date_str, time_str = get_eat_parts()
-        master_key = build_video_r2_key("Video_Master16x9", language, topic, "mp4", date_str, time_str)
+        master_dims = _probe_video_dims(export_master)
+        master_label = _master_label(master_dims)
+        master_key = build_video_r2_key(master_label, language, topic, "mp4", date_str, time_str)
         master_url = upload_output(export_master, master_key)
 
         thumb_key = build_video_r2_key("Thumb_1280x720", language, topic, "jpg", date_str, time_str)
@@ -214,9 +268,15 @@ async def packaging_publish(
                 "aspect_ratio": "9:16",
             })
 
+        master_w, master_h = master_dims if master_dims else (None, None)
         return {
             "package_id": job_id,
-            "master": {"r2_key": master_key, "url": master_url},
+            "master": {
+                "r2_key": master_key,
+                "url": master_url,
+                "width": master_w,
+                "height": master_h,
+            },
             "thumbnail": {
                 "r2_key": thumb_key, "url": thumb_url,
                 "width": 1280, "height": 720,

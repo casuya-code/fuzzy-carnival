@@ -434,7 +434,7 @@ export async function processVideo(payload: {
 
 export interface PackageResult {
   package_id: string;
-  master: { r2_key: string; url: string };
+  master: { r2_key: string; url: string; width?: number | null; height?: number | null };
   thumbnail: { r2_key: string; url: string; width: number; height: number; hook_words: string[] };
   shorts: {
     part: number;
