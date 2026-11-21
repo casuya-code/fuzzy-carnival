@@ -79,7 +79,13 @@ def _resolve_audio_key(key: str, dest: Optional[Path] = None) -> str:
     local = _safe_local_path(key)
     if local.exists():
         return str(local)
-    return download_reference(key, dest=dest)
+    try:
+        return download_reference(key, dest=dest)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        # A missing audio key is a client input problem, not a server failure.
+        raise HTTPException(status_code=404, detail=f"Audio key not found: {key}") from e
 
 
 @router.post("/mix")

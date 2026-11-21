@@ -12,6 +12,10 @@ os.environ.setdefault("COQUI_TOS_AGREED", "1")
 MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 
+class MsingiReferenceRequiredError(ValueError):
+    """Raised when cloning is asked for without a sample or preset speaker."""
+
+
 def _patch_xtts_audio_loader() -> None:
     """Use soundfile for XTTS reference audio instead of TorchCodec.
 
@@ -153,7 +157,7 @@ class MsingiSautiEngine(BaseTTSEngine):
         else:
             speakers = getattr(self.model, "speakers", None) or []
             if not speakers:
-                raise RuntimeError(
+                raise MsingiReferenceRequiredError(
                     "Swahili Voice Clone needs an uploaded voice sample. "
                     "Add a short, clear Swahili recording and try again."
                 )

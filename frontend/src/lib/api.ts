@@ -267,6 +267,7 @@ export async function burnCaptions(payload: {
   duration_seconds?: number;
   ass_r2_key?: string;
   ass_url?: string;
+  warning?: string;
   word_count?: number;
   chunk_count?: number;
   voice_duration_seconds?: number;

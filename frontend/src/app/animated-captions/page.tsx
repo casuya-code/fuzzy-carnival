@@ -27,6 +27,7 @@ interface CaptionResult {
   duration_seconds?: number;
   ass_r2_key?: string;
   ass_url?: string;
+  warning?: string;
   word_count?: number;
   chunk_count?: number;
   voice_duration_seconds?: number;
@@ -688,6 +689,11 @@ export default function AnimatedCaptionsPage() {
             <p className="text-[11px] font-mono text-green-700">
               Tᵥ={result.voice_duration_seconds != null ? `${result.voice_duration_seconds.toFixed(1)}s` : "—"} · t₀={result.intro_delay_sec != null ? `${result.intro_delay_sec.toFixed(1)}s` : "—"}
             </p>
+            {result.warning && (
+              <p className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                ⚠ {result.warning}
+              </p>
+            )}
             <video controls src={result.video_url} className="w-full rounded-lg bg-black max-h-[520px]" />
             <div className="flex items-center gap-3 flex-wrap">
               <a href={result.video_url} download={`captioned-${result.video_r2_key?.split("/").pop() || "output.mp4"}`} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">⬇ Download MP4</a>

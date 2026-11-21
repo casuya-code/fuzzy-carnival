@@ -37,7 +37,7 @@ function MetaDetails({ meta }: { meta?: Record<string, unknown> }) {
   if (typeof meta.start_sec === "number" && typeof meta.length_sec === "number") {
     bits.push(<span key="range">start {meta.start_sec}s · {meta.length_sec}s</span>);
   }
-  if (typeof meta.ass_url === "string") {
+  if (typeof meta.ass_url === "string" && meta.ass_url) {
     bits.push(
       <a key="ass" href={meta.ass_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
         soft subs (.ass)

@@ -45,6 +45,13 @@ export default function PublishPackagePage() {
       setSelectedVideoUrl(list[0].video_url);
       if (list[0].language) setLanguage(list[0].language);
       if (list[0].topic) setTopic(list[0].topic);
+      // Keep the initial auto-selection consistent with an explicit click.
+      // Inlined so this mount-only effect has no callback dependency.
+      const d = list[0].duration_seconds;
+      if (d) {
+        setClipLength(Math.max(5, Math.min(180, Math.floor(d / 3))));
+        setStarts([0, Math.round(d / 3), Math.round(2 * d / 3)]);
+      }
     }
     const speech = loadSpeechHistory().find((s) => s.language);
     if (speech?.language) setLanguage(speech.language);

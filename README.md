@@ -1,6 +1,6 @@
 # Bilingual Voice Clone Platform
 
-Clone voices in **English** and **Swahili** using four TTS engines, deployed on
+Clone voices in **English** and **Swahili** using six TTS engines, deployed on
 **Vercel (free)** + **Railway ($5 Pro)** + **Cloudflare R2 (free)**.
 
 ## Engines
@@ -9,6 +9,7 @@ Clone voices in **English** and **Swahili** using four TTS engines, deployed on
 |---|---|---|---|---|---|
 | **Azure AI Speech** (`azure`, sw-TZ Daudi/Rehema) | Default Swahili storytelling, documentaries, narration | F0: 500k chars/mo free (plan-dependent) | 0 MB (cloud REST) | No (preset neural voices) | Auto-falls back to MMS on HTTP 429 quota/rate limit; commercial rights per Azure terms |
 | **Kyutai Pocket TTS** (`kyutai`) | Unlimited English custom voice cloning from short sample | Included in your container | ~1.0 GB (CPU) | Zero-shot | Local/open weights |
+| **AfriSpeech Pocket** (`afrispeech`) | African-accented English cloning from short sample | Included in your container | ~1.0 GB (CPU) | Zero-shot | Uses a community PocketTTS checkpoint via `AFRISPEECH_CONFIG`, otherwise the base Kyutai model |
 | **ElevenLabs** (`elevenlabs`) | Dramatic character voices & short hooks (EN/SW accents) | Free tier limited (plan-dependent); paid unlocks more | 0 MB (cloud REST) | Preset voice, or IVC when `ELEVENLABS_ENABLE_CLONING=true` and your plan allows it | Uses `eleven_flash_v2_5` by default to stretch quota |
 | **Msingi-AI Sauti / XTTS-v2** (`msingi`) | Self-hosted Swahili voice cloning (when cloud unavailable/quota used) | Included in your container | ~3.5 GB (loaded on demand) | Zero-shot | Uses base XTTS-v2 unless `MSINGI_CHECKPOINT_PATH` points to a fine-tuned checkpoint. Base XTTS has no `sw` token, so Swahili uses a safe tokenizer fallback with a UI warning |
 | **Meta MMS-TTS** (`mms`) | Offline/low-cost Swahili fallback | Included in your container | ~0.5 GB | No | Sentence/chunked delivery with punctuation-aware breaths + adjustable pace; checkpoint swappable via `MMS_MODEL_ID` |
@@ -155,8 +156,9 @@ cd backend
 python scripts/download_weights.py
 ```
 
-Weights are gitignored; on Railway they download on first request unless
-baked into the image (uncomment the RUN line in the Dockerfile).
+Weights are gitignored. The Dockerfile already runs this prefetch at build
+time; outside Docker, run it manually before deploying (or let models download
+on first request).
 
 ## 3. Frontend (Vercel)
 

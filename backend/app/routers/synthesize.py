@@ -8,9 +8,19 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from app.config import DENOISE_REFERENCE, ELEVENLABS_ENABLE_CLONING, TEMP_AUDIO_DIR
+from app.config import (
+    AZURE_SPEECH_KEY,
+    DENOISE_REFERENCE,
+    ELEVENLABS_API_KEY,
+    ELEVENLABS_ENABLE_CLONING,
+    TEMP_AUDIO_DIR,
+)
 from app.engines.azure_swahili import AzureQuotaExceededError
-from app.engines.elevenlabs import ElevenLabsCloningUnavailableError
+from app.engines.elevenlabs import (
+    ElevenLabsCloningUnavailableError,
+    ElevenLabsQuotaExceededError,
+)
+from app.engines.msingi_sauti import MsingiReferenceRequiredError
 from app.schemas.tts import SynthesizeRequest, SynthesizeResponse
 from app.services.audio_processor import (
     _ffmpeg_available,
@@ -196,6 +206,20 @@ def _join_warnings(existing: str | None, new: str) -> str:
     return f"{existing} {new}".strip() if existing else new
 
 
+def _cloud_configured(engine_name: str) -> bool:
+    """Cloud engines load no weights, so a missing credential must be checked here."""
+    if engine_name == "azure":
+        return bool(AZURE_SPEECH_KEY)
+    if engine_name == "elevenlabs":
+        return bool(ELEVENLABS_API_KEY)
+    return True
+
+
+def _fallback_engine(language: str) -> str:
+    """Swahili falls back to MMS; English falls back to the local default clone engine."""
+    return "mms" if language == "sw" else "kyutai"
+
+
 def _make_cache_key(engine_name: str, req: SynthesizeRequest, text: str) -> tuple:
     """Cache identity must include every setting that changes the delivered take."""
     denoise = req.denoise_ref if req.denoise_ref is not None else DENOISE_REFERENCE
@@ -311,21 +335,37 @@ def synthesize(req: SynthesizeRequest):
     raw_out = str(TEMP_AUDIO_DIR / f"out_{job_id}.wav")
     mp3_out: str | None = None
     try:
-        # Synthesize with Azure quota fallback to MMS
-        try:
-            engine = manager.get(engine_name)
-        except Exception as e:
-            if requested_engine == "azure":
-                # Smart fallback if Azure unavailable/disabled
-                try:
-                    engine_name = "mms"
-                    engine = manager.get("mms")
-                    ref_path = None
-                    warning = _join_warnings(warning, "Azure engine unavailable. Fell back to Meta MMS-TTS.")
-                except Exception:
-                    raise HTTPException(status_code=503, detail=f"Engine unavailable: {e}")
-            else:
-                raise HTTPException(status_code=503, detail=f"Engine unavailable: {e}")
+        # Availability check. Cloud engines load no weights, so also verify credentials.
+        availability_error: Exception | None = None
+        if engine_name in CLOUD_ENGINES and not _cloud_configured(engine_name):
+            availability_error = RuntimeError(f"{engine_name} is not configured")
+        if availability_error is None:
+            try:
+                engine = manager.get(engine_name)
+            except Exception as e:
+                availability_error = e
+
+        if availability_error is not None:
+            if engine_name not in CLOUD_ENGINES:
+                raise HTTPException(
+                    status_code=503, detail=f"Engine unavailable: {availability_error}"
+                ) from availability_error
+            fallback_name = _fallback_engine(req.language)
+            try:
+                engine = manager.get(fallback_name)
+            except Exception as fallback_error:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"{engine_name} unavailable ({availability_error}); "
+                        f"fallback '{fallback_name}' unavailable: {fallback_error}"
+                    ),
+                ) from fallback_error
+            warning = _join_warnings(
+                warning, f"{engine_name} unavailable. Fell back to '{fallback_name}'."
+            )
+            engine_name = fallback_name
+            ref_path = None
 
         # If we fell back at availability time, update cache key context to effective engine
         cache_key = _make_cache_key(engine_name, req, text)
@@ -350,23 +390,35 @@ def synthesize(req: SynthesizeRequest):
                 )
             else:
                 raise HTTPException(status_code=500, detail=f"Synthesis failed: {e}")
-        except AzureQuotaExceededError:
-            # Required smart quota fallback: Azure -> MMS
+        except MsingiReferenceRequiredError as e:
+            # Missing user input, not a server fault.
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except (AzureQuotaExceededError, ElevenLabsQuotaExceededError) as e:
+            # Required smart quota fallback: cloud -> local engine for this language.
+            fallback_name = _fallback_engine(req.language)
             try:
-                fallback_engine = manager.get("mms")
-            except Exception as e:
-                raise HTTPException(status_code=503, detail=f"Azure quota exceeded and MMS fallback unavailable: {e}")
-            engine_name = "mms"
-            ref_path = None
-            warning = _join_warnings(
-                warning, "Azure quota exceeded (HTTP 429). Fell back to Meta MMS-TTS for this request."
+                fallback_engine = manager.get(fallback_name)
+            except Exception as fallback_error:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Cloud quota exceeded ({e}); fallback '{fallback_name}' unavailable: {fallback_error}",
+                ) from fallback_error
+            reason = (
+                "Azure quota exceeded (HTTP 429)"
+                if isinstance(e, AzureQuotaExceededError)
+                else "ElevenLabs quota/rate limit reached"
             )
+            warning = _join_warnings(
+                warning, f"{reason}. Fell back to '{fallback_name}' for this request."
+            )
+            engine_name = fallback_name
+            ref_path = None
             # Re-run with fallback (new output path)
             raw_out_fb = str(TEMP_AUDIO_DIR / f"out_{job_id}_fb.wav")
             try:
                 produced = _run_synthesis(
                     fallback_engine,
-                    "mms",
+                    fallback_name,
                     text,
                     req.language,
                     None,
@@ -375,11 +427,13 @@ def synthesize(req: SynthesizeRequest):
                     speaking_rate=req.speaking_rate,
                 )
                 raw_out = raw_out_fb
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"MMS fallback synthesis failed: {e}")
+            except Exception as fallback_error:
+                raise HTTPException(
+                    status_code=500, detail=f"'{fallback_name}' fallback synthesis failed: {fallback_error}"
+                ) from fallback_error
         except Exception as e:
-            # Optional resilience: if Azure fails for other transient reasons, do not auto-fallback silently except quota.
-            raise HTTPException(status_code=500, detail=f"Synthesis failed: {e}")
+            # Optional resilience: transient cloud errors are not silently falling back except quota.
+            raise HTTPException(status_code=500, detail=f"Synthesis failed: {e}") from e
 
         if produced.endswith(".mp3"):
             # Already delivered as mp3 (e.g. cloud engine or crossfaded chunks) — skip re-encode.
