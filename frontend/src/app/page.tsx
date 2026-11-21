@@ -60,10 +60,10 @@ export default function Home() {
         <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-3xl">
           Create speech and videos in a few easy steps. Use the menu on the left to move between tools, or pick one below to begin.
         </p>
-        <div className="mt-4 flex flex-wrap gap-2 text-sm">
-          <span className="rounded-full bg-blue-50 px-3 py-1 text-blue-700 font-medium">Easy to use</span>
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 font-medium">English & Swahili</span>
-          <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-700 font-medium">Save and download your work</span>
+        <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3 text-sm w-full">
+          <span className="flex items-center justify-center rounded-full bg-blue-50 px-2 sm:px-3 py-2 text-blue-700 font-medium text-center">Easy to use</span>
+          <span className="flex items-center justify-center rounded-full bg-emerald-50 px-2 sm:px-3 py-2 text-emerald-700 font-medium text-center">English &amp; Swahili</span>
+          <span className="flex items-center justify-center rounded-full bg-gray-100 px-2 sm:px-3 py-2 text-gray-700 font-medium text-center">Save and download your work</span>
         </div>
       </section>
 

@@ -229,14 +229,14 @@ export default function TextToSpeechForm({
       {chips.length > 0 && (
         <div className="space-y-2">
           <div className="text-sm font-medium text-gray-700">Try a sample text</div>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
             {chips.map((s, i) => (
               <button
                 key={i}
                 type="button"
                 onClick={() => setText(s)}
                 title={s}
-                className="max-w-full truncate rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs sm:text-sm text-blue-700 transition hover:bg-blue-100"
+                className="w-full min-w-0 truncate rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-left text-xs sm:text-sm text-blue-700 transition hover:bg-blue-100"
               >
                 {s.length > 48 ? s.slice(0, 48) + "…" : s}
               </button>
