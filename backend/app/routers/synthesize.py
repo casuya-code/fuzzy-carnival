@@ -610,7 +610,7 @@ async def synthesize(req: SynthesizeRequest, request: Request):
         monitor.cancel()
         try:
             await monitor
-        except Exception:
+        except (asyncio.CancelledError, Exception):
             pass
         try:
             _synthesize_lock.release()
