@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import re
@@ -6,7 +7,8 @@ import uuid
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from app.config import (
     AZURE_SPEECH_KEY,
@@ -42,6 +44,14 @@ from app.services.timeline_service import estimate_timeline
 
 router = APIRouter(prefix="/api/v1", tags=["synthesize"])
 logger = logging.getLogger(__name__)
+
+# Prevent concurrent heavy synthesis jobs from piling up after client cancel/retry.
+_synthesize_lock = threading.Lock()
+
+
+def _check_cancel(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise HTTPException(status_code=499, detail="Speech creation cancelled")
 
 # Singleton model manager
 _manager: ModelManager | None = None
@@ -137,6 +147,7 @@ def _synthesize_chunked(
     pause_ms: int = 220,
     crossfade: bool = True,
     speaking_rate: float | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> str:
     """Synthesize long text sentence-by-sentence and concatenate (XTTS/MMS stability)."""
     chunks, gaps = _split_with_pauses(text)
@@ -148,6 +159,7 @@ def _synthesize_chunked(
     tmp_files = []
     try:
         for i, chunk in enumerate(chunks):
+            _check_cancel(cancel_event)
             tmp = str(TEMP_AUDIO_DIR / f"chunk_{job_id}_{i}.wav")
             engine.synthesize(
                 text=chunk, reference_audio_path=ref_path, output_path=tmp, speaking_rate=speaking_rate
@@ -276,7 +288,9 @@ def _run_synthesis(
     raw_out: str,
     job_id: str,
     speaking_rate: float | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> str:
+    _check_cancel(cancel_event)
     # Azure/ElevenLabs: single cloud call (text already normalized; length <= 2000)
     if engine_name == "azure":
         return engine.synthesize_for_language(text=text, language=language, output_path=raw_out)
@@ -285,55 +299,60 @@ def _run_synthesis(
 
     if engine_name == "msingi" and len(text) > 400:
         return _synthesize_chunked(
-            engine, text, ref_path, raw_out, job_id, pause_ms=220, crossfade=True, speaking_rate=speaking_rate
+            engine, text, ref_path, raw_out, job_id, pause_ms=220, crossfade=True, speaking_rate=speaking_rate, cancel_event=cancel_event
         )
     if engine_name == "mms" and (len(_split_with_pauses(text)[0]) > 1 or len(text) > 120):
         return _synthesize_chunked(
-            engine, text, ref_path, raw_out, job_id, pause_ms=400, crossfade=False, speaking_rate=speaking_rate
+            engine, text, ref_path, raw_out, job_id, pause_ms=400, crossfade=False, speaking_rate=speaking_rate, cancel_event=cancel_event
         )
     return engine.synthesize(
         text=text, reference_audio_path=ref_path, output_path=raw_out, speaking_rate=speaking_rate
     )
 
 
-@router.post("/synthesize", response_model=SynthesizeResponse)
-def synthesize(req: SynthesizeRequest):
-    manager = get_manager()
-
-    # Normalize text
-    text = normalize_text(req.text, req.language)
-
-    # Resolve engine (validate against language)
-    requested_engine = req.engine
-    engine_name = _resolve_engine(requested_engine, req.language)
-
-    # Cache lookup for identical requests (by effective engine and all take-affecting settings)
-    cache_key = _make_cache_key(engine_name, req, text)
-    if not req.skip_cache:
-        with _cache_lock:
-            if cache_key in _result_cache:
-                cached = _result_cache[cache_key]
-                _result_cache.move_to_end(cache_key)
-                # Verify local (dev) output still exists
-                local = local_output_path(cached.audio_r2_key)
-                if "/static/" not in cached.audio_url or (
-                    local is not None and local.exists()
-                ):
-                    try:
-                        return _cached_response_url(cached)
-                    except Exception:
-                        # URL signing failed: drop the entry and regenerate below.
-                        pass
-                del _result_cache[cache_key]
-
-    # Prepare reference audio (cached by voice key) for local cloning engines only
-    ref_path = _prepare_reference(req, engine_name)
-
-    warning: str | None = _remap_warning(requested_engine, engine_name, req.language)
-    job_id = uuid.uuid4().hex
-    raw_out = str(TEMP_AUDIO_DIR / f"out_{job_id}.wav")
-    mp3_out: str | None = None
+def _synthesize_sync(req: SynthesizeRequest, request: Request, cancel_event: threading.Event | None = None):
+    if not _synthesize_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="Another speech request is still running. Please wait for it to finish before starting a new one.",
+        )
     try:
+        _check_cancel(cancel_event)
+        manager = get_manager()
+
+        # Normalize text
+        text = normalize_text(req.text, req.language)
+
+        # Resolve engine (validate against language)
+        requested_engine = req.engine
+        engine_name = _resolve_engine(requested_engine, req.language)
+
+        # Cache lookup for identical requests (by effective engine and all take-affecting settings)
+        cache_key = _make_cache_key(engine_name, req, text)
+        if not req.skip_cache:
+            with _cache_lock:
+                if cache_key in _result_cache:
+                    cached = _result_cache[cache_key]
+                    _result_cache.move_to_end(cache_key)
+                    # Verify local (dev) output still exists
+                    local = local_output_path(cached.audio_r2_key)
+                    if "/static/" not in cached.audio_url or (
+                        local is not None and local.exists()
+                    ):
+                        try:
+                            return _cached_response_url(cached)
+                        except Exception:
+                            # URL signing failed: drop the entry and regenerate below.
+                            pass
+                    del _result_cache[cache_key]
+
+        # Prepare reference audio (cached by voice key) for local cloning engines only
+        ref_path = _prepare_reference(req, engine_name)
+
+        warning: str | None = _remap_warning(requested_engine, engine_name, req.language)
+        job_id = uuid.uuid4().hex
+        raw_out = str(TEMP_AUDIO_DIR / f"out_{job_id}.wav")
+        mp3_out: str | None = None
         # Availability check. Cloud engines load no weights, so also verify credentials.
         availability_error: Exception | None = None
         if engine_name in CLOUD_ENGINES and not _cloud_configured(engine_name):
@@ -371,7 +390,7 @@ def synthesize(req: SynthesizeRequest):
 
         try:
             produced = _run_synthesis(
-                engine, engine_name, text, req.language, ref_path, raw_out, job_id, speaking_rate=req.speaking_rate
+                engine, engine_name, text, req.language, ref_path, raw_out, job_id, speaking_rate=req.speaking_rate, cancel_event=cancel_event
             )
             engine_warning = getattr(engine, "last_warning", None)
             if engine_warning:
@@ -385,7 +404,7 @@ def synthesize(req: SynthesizeRequest):
                     "Generated with the preset ElevenLabs voice instead.",
                 )
                 produced = _run_synthesis(
-                    engine, "elevenlabs", text, req.language, None, raw_out, job_id, speaking_rate=req.speaking_rate
+                    engine, "elevenlabs", text, req.language, None, raw_out, job_id, speaking_rate=req.speaking_rate, cancel_event=cancel_event
                 )
             else:
                 raise HTTPException(status_code=500, detail=f"Synthesis failed: {e}")
@@ -424,6 +443,7 @@ def synthesize(req: SynthesizeRequest):
                     raw_out_fb,
                     job_id + "_fb",
                     speaking_rate=req.speaking_rate,
+                    cancel_event=cancel_event,
                 )
                 raw_out = raw_out_fb
             except Exception as fallback_error:
@@ -448,6 +468,7 @@ def synthesize(req: SynthesizeRequest):
             # No ffmpeg locally: keep original container (wav)
             mp3_out = produced
 
+        _check_cancel(cancel_event)
         ext = "mp3" if mp3_out.endswith(".mp3") else "wav"
         r2_key = build_speech_r2_key(
             engine_name, req.language, req.topic or "Untitled", ext
@@ -528,3 +549,31 @@ def synthesize(req: SynthesizeRequest):
         for p in {raw_out, mp3_out}:
             if p:
                 Path(p).unlink(missing_ok=True)
+        _synthesize_lock.release()
+
+
+@router.post("/synthesize", response_model=SynthesizeResponse)
+async def synthesize(req: SynthesizeRequest, request: Request):
+    cancel_event = threading.Event()
+
+    async def _monitor_disconnect() -> None:
+        try:
+            while not cancel_event.is_set():
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    return
+                await asyncio.sleep(0.5)
+        except Exception:
+            # Best-effort only; do not fail synthesis because monitor failed.
+            return
+
+    monitor = asyncio.create_task(_monitor_disconnect())
+    try:
+        return await run_in_threadpool(_synthesize_sync, req, request, cancel_event)
+    finally:
+        cancel_event.set()
+        monitor.cancel()
+        try:
+            await monitor
+        except Exception:
+            pass
