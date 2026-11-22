@@ -314,12 +314,15 @@ def _run_synthesis(
     )
 
 
-def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, cancel_event: threading.Event | None = None):
-    if not _synthesize_lock.acquire(blocking=False):
-        raise HTTPException(
-            status_code=429,
-            detail="Another speech request is still running. Please wait for it to finish before starting a new one.",
-        )
+def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, cancel_event: threading.Event | None = None, lock_already_held: bool = False):
+    acquired_here = False
+    if not lock_already_held:
+        if not _synthesize_lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=429,
+                detail="Another speech request is still running. Please wait for it to finish before starting a new one.",
+            )
+        acquired_here = True
     try:
         _check_cancel(cancel_event)
         manager = get_manager()
@@ -553,7 +556,8 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         for p in {raw_out, mp3_out}:
             if p:
                 Path(p).unlink(missing_ok=True)
-        _synthesize_lock.release()
+        if acquired_here:
+            _synthesize_lock.release()
 
 
 @router.post("/synthesize", response_model=SynthesizeResponse)
@@ -574,6 +578,9 @@ async def synthesize(req: SynthesizeRequest, request: Request):
 
     from app.services.synthesis_worker import get_synthesis_worker
 
+    resolved_engine = _resolve_engine(req.engine, req.language)
+    use_worker = resolved_engine not in CLOUD_ENGINES
+
     if not _synthesize_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=429,
@@ -581,19 +588,23 @@ async def synthesize(req: SynthesizeRequest, request: Request):
         )
     monitor = asyncio.create_task(_monitor_disconnect())
     try:
-        worker = get_synthesis_worker()
-        result = await run_in_threadpool(
-            worker.submit,
-            req.model_dump(),
-            cancel_event=cancel_event,
-        )
-        if result.ok:
-            return SynthesizeResponse.model_validate(result.value)
-        if result.error_type == "Cancelled":
-            raise HTTPException(status_code=499, detail="Speech creation cancelled")
-        if result.error_status:
-            raise HTTPException(status_code=result.error_status, detail=result.error_message or "Synthesis failed")
-        raise HTTPException(status_code=500, detail=result.error_message or "Synthesis failed")
+        if use_worker:
+            worker = get_synthesis_worker()
+            result = await run_in_threadpool(
+                worker.submit,
+                req.model_dump(),
+                cancel_event=cancel_event,
+            )
+            if result.ok:
+                return SynthesizeResponse.model_validate(result.value)
+            if result.error_type == "Cancelled":
+                raise HTTPException(status_code=499, detail="Speech creation cancelled")
+            if result.error_status:
+                raise HTTPException(status_code=result.error_status, detail=result.error_message or "Synthesis failed")
+            raise HTTPException(status_code=500, detail=result.error_message or "Synthesis failed")
+
+        # Cloud engines: no heavy local model state; in-process avoids IPC overhead.
+        return await run_in_threadpool(_synthesize_sync, req, request, cancel_event, True)
     finally:
         cancel_event.set()
         monitor.cancel()

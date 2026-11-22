@@ -31,8 +31,14 @@ class SynthesisJobResult:
 
 def _worker_loop(job_q: mp.Queue, result_q: mp.Queue) -> None:
     # Imported inside worker process.
-    from app.routers.synthesize import _synthesize_sync  # local import for spawn
+    from app.routers.synthesize import _synthesize_sync, get_manager  # local import for spawn
     from app.schemas.tts import SynthesizeRequest
+
+    # Warm default local engines in background so worker is ready after (re)start.
+    try:
+        get_manager().warm_async()
+    except Exception:
+        pass
 
     while True:
         job = job_q.get()
@@ -77,11 +83,7 @@ class SynthesisWorker:
             if self._proc is not None and self._proc.is_alive():
                 return
             self._stop_locked()
-            self._job_q = self._ctx.Queue()
-            self._result_q = self._ctx.Queue()
-            self._proc = self._ctx.Process(target=_worker_loop, args=(self._job_q, self._result_q), daemon=True)
-            self._proc.start()
-            logger.info("Synthesis worker started pid=%s", self._proc.pid)
+            self._ensure_started_unlocked()
 
     def _stop_locked(self) -> None:
         proc = self._proc
@@ -114,6 +116,17 @@ class SynthesisWorker:
         with self._start_lock:
             logger.warning("Restarting synthesis worker")
             self._stop_locked()
+            # Respawn immediately so warmup begins before the next request arrives.
+            self._ensure_started_unlocked()
+
+    def _ensure_started_unlocked(self) -> None:
+        if self._proc is not None and self._proc.is_alive():
+            return
+        self._job_q = self._ctx.Queue()
+        self._result_q = self._ctx.Queue()
+        self._proc = self._ctx.Process(target=_worker_loop, args=(self._job_q, self._result_q), daemon=True)
+        self._proc.start()
+        logger.info("Synthesis worker started pid=%s", self._proc.pid)
 
     def is_alive(self) -> bool:
         p = self._proc
@@ -134,7 +147,8 @@ class SynthesisWorker:
                 self.restart()
                 return SynthesisJobResult(ok=False, error_type="Cancelled", error_message="Speech creation cancelled")
             if self._proc is None or not self._proc.is_alive():
-                return SynthesisJobResult(ok=False, error_type="WorkerDied", error_message="Synthesis worker stopped unexpectedly")
+                self.restart()
+                return SynthesisJobResult(ok=False, error_type="WorkerDied", error_message="Synthesis worker stopped unexpectedly; restarted a fresh worker")
             try:
                 got_id, result = self._result_q.get(timeout=poll_interval)
             except queue.Empty:
