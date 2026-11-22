@@ -314,7 +314,7 @@ def _run_synthesis(
     )
 
 
-def _synthesize_sync(req: SynthesizeRequest, request: Request, cancel_event: threading.Event | None = None):
+def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, cancel_event: threading.Event | None = None):
     if not _synthesize_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=429,
@@ -570,16 +570,38 @@ async def synthesize(req: SynthesizeRequest, request: Request):
                     return
                 await asyncio.sleep(0.5)
         except Exception:
-            # Best-effort only; do not fail synthesis because monitor failed.
             return
 
+    from app.services.synthesis_worker import get_synthesis_worker
+
+    if not _synthesize_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="Another speech request is still running. Please wait for it to finish before starting a new one.",
+        )
     monitor = asyncio.create_task(_monitor_disconnect())
     try:
-        return await run_in_threadpool(_synthesize_sync, req, request, cancel_event)
+        worker = get_synthesis_worker()
+        result = await run_in_threadpool(
+            worker.submit,
+            req.model_dump(),
+            cancel_event=cancel_event,
+        )
+        if result.ok:
+            return SynthesizeResponse.model_validate(result.value)
+        if result.error_type == "Cancelled":
+            raise HTTPException(status_code=499, detail="Speech creation cancelled")
+        if result.error_status:
+            raise HTTPException(status_code=result.error_status, detail=result.error_message or "Synthesis failed")
+        raise HTTPException(status_code=500, detail=result.error_message or "Synthesis failed")
     finally:
         cancel_event.set()
         monitor.cancel()
         try:
             await monitor
         except Exception:
+            pass
+        try:
+            _synthesize_lock.release()
+        except RuntimeError:
             pass
