@@ -96,6 +96,7 @@ def health():
             "azure_configured": bool(AZURE_SPEECH_KEY),
             "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
             "elevenlabs_cloning": bool(ELEVENLABS_API_KEY and ELEVENLABS_ENABLE_CLONING),
+            "synthesis_busy": bool(synthesize.is_synthesis_busy()),
         },
         issues=issues,
     )

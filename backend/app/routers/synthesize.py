@@ -49,6 +49,10 @@ logger = logging.getLogger(__name__)
 _synthesize_lock = threading.Lock()
 
 
+def is_synthesis_busy() -> bool:
+    return _synthesize_lock.locked()
+
+
 def _check_cancel(cancel_event: threading.Event | None) -> None:
     if cancel_event is not None and cancel_event.is_set():
         raise HTTPException(status_code=499, detail="Speech creation cancelled")
@@ -554,6 +558,8 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request, cancel_event: thr
 
 @router.post("/synthesize", response_model=SynthesizeResponse)
 async def synthesize(req: SynthesizeRequest, request: Request):
+    if await request.is_disconnected():
+        raise HTTPException(status_code=499, detail="Speech creation cancelled")
     cancel_event = threading.Event()
 
     async def _monitor_disconnect() -> None:
