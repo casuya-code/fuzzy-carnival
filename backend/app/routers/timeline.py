@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.config import ELEVENLABS_API_KEY, TEMP_AUDIO_DIR
@@ -13,8 +13,10 @@ from app.services.timeline_service import (
     estimate_timeline,
     segments_from_forced_alignment_words,
 )
+from app.auth import require_api_key
+from app.rate_limit import rate_limit
 
-router = APIRouter(prefix="/api/v1", tags=["timeline"])
+router = APIRouter(prefix="/api/v1", tags=["timeline"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 logger = logging.getLogger(__name__)
 
 

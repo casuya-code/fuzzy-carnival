@@ -1,4 +1,5 @@
 import re
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -45,7 +46,8 @@ def build_speech_r2_key(
     clean_topic = sanitize_topic(topic)
     if date_str is None or time_str is None:
         date_str, time_str = get_eat_parts()
-    filename = f"Speech_{eng_code}_{lang_code}_{clean_topic}_{date_str}_{time_str}.{ext}"
+    suffix = uuid.uuid4().hex[:8]
+    filename = f"Speech_{eng_code}_{lang_code}_{clean_topic}_{date_str}_{time_str}_{suffix}.{ext}"
     return f"audio/{date_str}/{filename}"
 
 
@@ -62,5 +64,6 @@ def build_video_r2_key(
     if date_str is None or time_str is None:
         date_str, time_str = get_eat_parts()
     folder = "thumbs" if ext.lower() in ("jpg", "jpeg", "png") else "video"
-    filename = f"{variant}_{lang_code}_{clean_topic}_{date_str}_{time_str}.{ext}"
+    suffix = uuid.uuid4().hex[:8]
+    filename = f"{variant}_{lang_code}_{clean_topic}_{date_str}_{time_str}_{suffix}.{ext}"
     return f"{folder}/{date_str}/{filename}"

@@ -6,7 +6,7 @@ from pathlib import Path
 import json
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.config import (
     DEFAULT_INTRO_SEC,
@@ -50,8 +50,10 @@ from app.services.video_transitions import (
     parse_transitions,
 )
 from app.services.video_processor import stitch_clips_with_audio, stitch_silent_clips, trim_and_zoom_clip
+from app.auth import require_api_key
+from app.rate_limit import rate_limit
 
-router = APIRouter(prefix="/api/v1/video", tags=["video"])
+router = APIRouter(prefix="/api/v1/video", tags=["video"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 logger = logging.getLogger(__name__)
 
 

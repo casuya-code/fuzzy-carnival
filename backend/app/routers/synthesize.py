@@ -1,13 +1,14 @@
 import asyncio
 import hashlib
 import logging
+import os
 import re
 import threading
 import uuid
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from app.config import (
@@ -41,8 +42,10 @@ from app.services.r2_storage import (
 )
 from app.services.text_normalizer import normalize_text
 from app.services.timeline_service import estimate_timeline
+from app.auth import require_api_key
+from app.rate_limit import rate_limit
 
-router = APIRouter(prefix="/api/v1", tags=["synthesize"])
+router = APIRouter(prefix="/api/v1", tags=["synthesize"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 logger = logging.getLogger(__name__)
 
 # Prevent concurrent heavy synthesis jobs from piling up after client cancel/retry.
@@ -69,6 +72,7 @@ _cache_lock = threading.Lock()
 # Cache normalized+validated reference files by voice key (avoids re-download/re-normalize)
 _ref_cache: dict[str, str] = {}
 _ref_cache_lock = threading.Lock()
+_ref_key_locks: dict[str, threading.Lock] = {}
 _REFS_DIR = TEMP_AUDIO_DIR / "refs_cache"
 _REFS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -199,6 +203,27 @@ def _cached_response_url(cached: SynthesizeResponse) -> SynthesizeResponse:
         raise
 
 
+def _lookup_cached_result(cache_key: tuple, *, skip_cache: bool) -> SynthesizeResponse | None:
+    if skip_cache:
+        return None
+    with _cache_lock:
+        if cache_key not in _result_cache:
+            return None
+        cached = _result_cache[cache_key]
+        _result_cache.move_to_end(cache_key)
+        # Verify local (dev) output still exists
+        local = local_output_path(cached.audio_r2_key)
+        if "/static/" in cached.audio_url and local is not None and not local.exists():
+            del _result_cache[cache_key]
+            return None
+        try:
+            return _cached_response_url(cached)
+        except Exception:
+            # URL signing/object missing: drop the entry and regenerate below.
+            _result_cache.pop(cache_key, None)
+            return None
+
+
 def _resolve_engine(engine_name: str, language: str) -> str:
     if language == "en":
         if engine_name in ("msingi", "mms", "azure"):
@@ -250,6 +275,15 @@ def _make_cache_key(engine_name: str, req: SynthesizeRequest, text: str) -> tupl
     )
 
 
+def _ref_lock(cache_lookup_key: str) -> threading.Lock:
+    with _ref_cache_lock:
+        lock = _ref_key_locks.get(cache_lookup_key)
+        if lock is None:
+            lock = threading.Lock()
+            _ref_key_locks[cache_lookup_key] = lock
+        return lock
+
+
 def _prepare_reference(req: SynthesizeRequest, engine_name: str):
     if not req.voice_r2_key or not _uses_reference_sample(engine_name):
         return None
@@ -260,22 +294,60 @@ def _prepare_reference(req: SynthesizeRequest, engine_name: str):
         cached_norm = str(_REFS_DIR / f"{cache_tag}.wav")
         cache_lookup_key = f"{req.voice_r2_key}|{cache_tag}"
 
-        with _ref_cache_lock:
-            if cache_lookup_key in _ref_cache and Path(_ref_cache[cache_lookup_key]).exists():
-                return _ref_cache[cache_lookup_key]
-            if Path(cached_norm).exists():
-                _ref_cache[cache_lookup_key] = cached_norm
-                return cached_norm
+        def _use_cached(path: str) -> str | None:
+            p = Path(path)
+            if not p.exists() or p.stat().st_size <= 0:
+                return None
+            try:
+                validate_reference(str(p))
+            except Exception:
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return None
+            with _ref_cache_lock:
+                _ref_cache[cache_lookup_key] = str(p)
+            return str(p)
 
-        suffix = Path(req.voice_r2_key).suffix or ".audio"
-        downloaded = download_reference(req.voice_r2_key, dest=_REFS_DIR / f"{key_hash}_src{suffix}")
-        try:
-            normalize_reference(downloaded, cached_norm, denoise=denoise)
-            validate_reference(cached_norm)  # reject too-short / silent clips
-        finally:
-            Path(downloaded).unlink(missing_ok=True)
         with _ref_cache_lock:
-            _ref_cache[cache_lookup_key] = cached_norm
+            cached = _ref_cache.get(cache_lookup_key)
+        if cached:
+            valid = _use_cached(cached)
+            if valid:
+                return valid
+        existing = _use_cached(cached_norm)
+        if existing:
+            return existing
+
+        lock = _ref_lock(cache_lookup_key)
+        with lock:
+            with _ref_cache_lock:
+                cached = _ref_cache.get(cache_lookup_key)
+            if cached:
+                valid = _use_cached(cached)
+                if valid:
+                    return valid
+            existing = _use_cached(cached_norm)
+            if existing:
+                return existing
+
+            suffix = Path(req.voice_r2_key).suffix or ".audio"
+            src_tmp = _REFS_DIR / f"{key_hash}_{uuid.uuid4().hex[:8]}_src{suffix}"
+            norm_tmp = _REFS_DIR / f"{cache_tag}.{uuid.uuid4().hex[:8]}.tmp.wav"
+            downloaded = download_reference(req.voice_r2_key, dest=src_tmp)
+            try:
+                normalize_reference(downloaded, str(norm_tmp), denoise=denoise)
+                validate_reference(str(norm_tmp))  # reject too-short / silent clips
+                os.replace(str(norm_tmp), cached_norm)
+            finally:
+                Path(downloaded).unlink(missing_ok=True)
+                try:
+                    norm_tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            with _ref_cache_lock:
+                _ref_cache[cache_lookup_key] = cached_norm
         return cached_norm
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -297,7 +369,9 @@ def _run_synthesis(
     _check_cancel(cancel_event)
     # Azure/ElevenLabs: single cloud call (text already normalized; length <= 2000)
     if engine_name == "azure":
-        return engine.synthesize_for_language(text=text, language=language, output_path=raw_out)
+        return engine.synthesize_for_language(
+            text=text, language=language, output_path=raw_out, speaking_rate=speaking_rate
+        )
     if engine_name == "elevenlabs":
         return engine.synthesize(text=text, reference_audio_path=ref_path, output_path=raw_out)
 
@@ -329,6 +403,8 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
 
         # Normalize text
         text = normalize_text(req.text, req.language)
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Text is empty after normalization")
 
         # Resolve engine (validate against language)
         requested_engine = req.engine
@@ -336,22 +412,9 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
 
         # Cache lookup for identical requests (by effective engine and all take-affecting settings)
         cache_key = _make_cache_key(engine_name, req, text)
-        if not req.skip_cache:
-            with _cache_lock:
-                if cache_key in _result_cache:
-                    cached = _result_cache[cache_key]
-                    _result_cache.move_to_end(cache_key)
-                    # Verify local (dev) output still exists
-                    local = local_output_path(cached.audio_r2_key)
-                    if "/static/" not in cached.audio_url or (
-                        local is not None and local.exists()
-                    ):
-                        try:
-                            return _cached_response_url(cached)
-                        except Exception:
-                            # URL signing failed: drop the entry and regenerate below.
-                            pass
-                    del _result_cache[cache_key]
+        cached_hit = _lookup_cached_result(cache_key, skip_cache=req.skip_cache)
+        if cached_hit is not None:
+            return cached_hit
 
         # Prepare reference audio (cached by voice key) for local cloning engines only
         ref_path = _prepare_reference(req, engine_name)
@@ -359,7 +422,9 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         warning: str | None = _remap_warning(requested_engine, engine_name, req.language)
         job_id = uuid.uuid4().hex
         raw_out = str(TEMP_AUDIO_DIR / f"out_{job_id}.wav")
+        raw_out_fb: str | None = None
         mp3_out: str | None = None
+        produced: str | None = None
         # Availability check. Cloud engines load no weights, so also verify credentials.
         availability_error: Exception | None = None
         if engine_name in CLOUD_ENGINES and not _cloud_configured(engine_name):
@@ -394,6 +459,9 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
 
         # If we fell back at availability time, update cache key context to effective engine
         cache_key = _make_cache_key(engine_name, req, text)
+        cached_hit = _lookup_cached_result(cache_key, skip_cache=req.skip_cache)
+        if cached_hit is not None:
+            return cached_hit
 
         try:
             produced = _run_synthesis(
@@ -438,6 +506,12 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
             )
             engine_name = fallback_name
             ref_path = None
+            cache_key = _make_cache_key(engine_name, req, text)
+            cached_hit = _lookup_cached_result(cache_key, skip_cache=req.skip_cache)
+            if cached_hit is not None:
+                if warning and not cached_hit.warning:
+                    return cached_hit.model_copy(update={"warning": warning})
+                return cached_hit
             # Re-run with fallback (new output path)
             raw_out_fb = str(TEMP_AUDIO_DIR / f"out_{job_id}_fb.wav")
             try:
@@ -470,9 +544,11 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                 mp3_out = to_mp3(produced, candidate)
             except Exception as e:
                 logger.warning("MP3 encoding failed for %s: %s; keeping original container", produced, e)
+                warning = _join_warnings(warning, "MP3 encoding unavailable; delivered original WAV audio.")
                 mp3_out = produced
         else:
             # No ffmpeg locally: keep original container (wav)
+            warning = _join_warnings(warning, "MP3 encoding unavailable; delivered WAV audio.")
             mp3_out = produced
 
         _check_cancel(cancel_event)
@@ -553,9 +629,15 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         return result
     finally:
         # Output was uploaded; keep cached references, drop per-job scratch files.
-        for p in {raw_out, mp3_out}:
-            if p:
-                Path(p).unlink(missing_ok=True)
+        for p in {raw_out, raw_out_fb, mp3_out, produced}:
+            if not p:
+                continue
+            try:
+                pp = Path(p)
+                if pp.exists() and TEMP_AUDIO_DIR.resolve() in pp.resolve().parents:
+                    pp.unlink(missing_ok=True)
+            except Exception:
+                pass
         if acquired_here:
             _synthesize_lock.release()
 

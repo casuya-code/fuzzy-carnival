@@ -22,11 +22,18 @@ const r2Client = new S3Client({
  * Generate a presigned PUT URL so the browser can upload a reference clip
  * directly to R2 without proxying through our servers.
  */
-export async function createPresignedUploadUrl(key: string, contentType: string) {
+export async function createPresignedUploadUrl(
+  key: string,
+  contentType: string,
+  contentLength?: number
+) {
   const command = new PutObjectCommand({
     Bucket: bucketName,
     Key: key,
     ContentType: contentType,
+    ...(typeof contentLength === "number" && contentLength > 0
+      ? { ContentLength: contentLength }
+      : {}),
   });
   const url = await getSignedUrl(r2Client, command, { expiresIn: 300 });
   return url;

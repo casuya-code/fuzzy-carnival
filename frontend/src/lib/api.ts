@@ -5,6 +5,12 @@ export const API_BASE = (
   process.env.NEXT_PUBLIC_RAILWAY_API_URL || "http://127.0.0.1:8000"
 ).replace(/\/+$/, "");
 
+const PUBLIC_API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
+export function backendAuthHeaders(): Record<string, string> {
+  return PUBLIC_API_KEY ? { Authorization: `Bearer ${PUBLIC_API_KEY}` } : {};
+}
+
 export type Engine = "kyutai" | "afrispeech" | "msingi" | "mms" | "azure" | "elevenlabs";
 export type Language = "en" | "sw";
 
@@ -84,7 +90,7 @@ function extractDetail(text: string): string {
 }
 
 export async function checkHealth(): Promise<HealthResponse> {
-  const res = await fetch(`${API_BASE}/health`, { cache: "no-store" });
+  const res = await fetch(`${API_BASE}/health`, { cache: "no-store", headers: backendAuthHeaders() });
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
   return res.json();
 }
@@ -95,7 +101,7 @@ export async function synthesize(
 ): Promise<SynthesizeResponse> {
   const res = await fetch(`${API_BASE}/api/v1/synthesize`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify(payload),
     signal,
   });
@@ -112,7 +118,7 @@ export async function normalizePreview(
 ): Promise<string> {
   const res = await fetch(`${API_BASE}/api/v1/normalize`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify({ text, language }),
   });
   if (!res.ok) throw new Error("Normalize failed");
@@ -124,7 +130,7 @@ export async function warmEngine(engine: Engine): Promise<void> {
   try {
     await fetch(`${API_BASE}/api/v1/warm`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
       body: JSON.stringify({ engine }),
     });
   } catch {
@@ -134,12 +140,13 @@ export async function warmEngine(engine: Engine): Promise<void> {
 
 export async function requestUploadUrl(
   filename: string,
-  contentType: string
+  contentType: string,
+  contentLength?: number
 ): Promise<{ upload_url: string; key: string }> {
   const res = await fetch("/api/upload-url", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename, contentType }),
+    body: JSON.stringify({ filename, contentType, contentLength }),
   });
   if (!res.ok) throw new Error(`Upload URL request failed: ${res.status}`);
   return res.json();
@@ -166,7 +173,7 @@ export async function uploadLocalBlob(
     `${API_BASE}/api/v1/local-upload/${encodedKey}`,
     {
       method: "PUT",
-      headers: { "Content-Type": contentType },
+      headers: { "Content-Type": contentType, ...backendAuthHeaders() },
       body: file,
     }
   );
@@ -185,7 +192,7 @@ export async function mixAudio(payload: {
 }): Promise<{ audio_r2_key?: string; audio_url: string; duration_seconds?: number }> {
   const res = await fetch(`${API_BASE}/api/v1/mix`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -203,7 +210,7 @@ export async function transformAudio(payload: {
 }): Promise<{ audio_r2_key?: string; audio_url: string; duration_seconds?: number }> {
   const res = await fetch(`${API_BASE}/api/v1/audio/transform`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -248,7 +255,7 @@ export async function previewCaptions(payload: {
 }): Promise<CaptionPreview> {
   const res = await fetch(`${API_BASE}/api/v1/captions/preview`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -304,7 +311,7 @@ export async function burnCaptions(payload: {
   if (payload.lower_third) fd.append("lower_third", JSON.stringify(payload.lower_third));
   if (payload.lower_third_duration_sec != null) fd.append("lower_third_duration_sec", String(payload.lower_third_duration_sec));
   if (payload.font_path) fd.append("font_path", payload.font_path);
-  const res = await fetch(`${API_BASE}/api/v1/captions/burn`, { method: "POST", body: fd });
+  const res = await fetch(`${API_BASE}/api/v1/captions/burn`, { method: "POST", body: fd, headers: backendAuthHeaders() });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
     throw new Error(detail || `Caption burn failed (${res.status})`);
@@ -369,6 +376,7 @@ export async function processVideoBatch(payload: {
   const res = await fetch(`${API_BASE}/api/v1/video/process-batch`, {
     method: "POST",
     body: fd,
+    headers: backendAuthHeaders(),
   });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
@@ -437,6 +445,7 @@ export async function finalizeVideo(payload: {
   const res = await fetch(`${API_BASE}/api/v1/video/finalize`, {
     method: "POST",
     body: fd,
+    headers: backendAuthHeaders(),
   });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
@@ -513,6 +522,7 @@ export async function processVideo(payload: {
   const res = await fetch(`${API_BASE}/api/v1/video/process`, {
     method: "POST",
     body: fd,
+    headers: backendAuthHeaders(),
   });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
@@ -566,7 +576,7 @@ export async function previewThumbnail(payload: {
   if (payload.language) fd.append("language", payload.language);
   if (payload.text_style) fd.append("text_style", JSON.stringify(payload.text_style));
   if (payload.font_path) fd.append("font_path", payload.font_path);
-  const res = await fetch(`${API_BASE}/api/v1/packaging/thumbnail`, { method: "POST", body: fd });
+  const res = await fetch(`${API_BASE}/api/v1/packaging/thumbnail`, { method: "POST", body: fd, headers: backendAuthHeaders() });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
     throw new Error(detail || `Thumbnail preview failed (${res.status})`);
@@ -615,7 +625,7 @@ export async function publishPackage(payload: {
   if (payload.text_style) fd.append("text_style", JSON.stringify(payload.text_style));
   if (payload.lower_third) fd.append("lower_third", JSON.stringify(payload.lower_third));
   if (payload.font_path) fd.append("font_path", payload.font_path);
-  const res = await fetch(`${API_BASE}/api/v1/packaging/publish`, { method: "POST", body: fd });
+  const res = await fetch(`${API_BASE}/api/v1/packaging/publish`, { method: "POST", body: fd, headers: backendAuthHeaders() });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
     throw new Error(detail || `Publish failed (${res.status})`);
@@ -675,7 +685,7 @@ export async function generateSfx(payload: {
 }): Promise<SfxResult> {
   const res = await fetch(`${API_BASE}/api/v1/audio/sfx`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -694,7 +704,7 @@ export interface BrandFontResult {
 export async function uploadBrandFont(file: File): Promise<BrandFontResult> {
   const fd = new FormData();
   fd.append("font", file, file.name);
-  const res = await fetch(`${API_BASE}/api/v1/fonts/upload`, { method: "POST", body: fd });
+  const res = await fetch(`${API_BASE}/api/v1/fonts/upload`, { method: "POST", body: fd, headers: backendAuthHeaders() });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
     throw new Error(detail || `Font upload failed (${res.status})`);
@@ -714,7 +724,7 @@ export async function buildSpeechTimeline(payload: {
 }> {
   const res = await fetch(`${API_BASE}/api/v1/timeline`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {

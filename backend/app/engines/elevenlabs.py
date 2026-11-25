@@ -123,15 +123,18 @@ class ElevenLabsEngine(BaseTTSEngine):
     def _clone_cache_key(self, reference_audio_path: str) -> str:
         p = Path(reference_audio_path)
         try:
-            st = p.stat()
-            basis = f"{p.name}|{st.st_size}|{int(st.st_mtime)}"
+            h = hashlib.sha256()
+            with p.open("rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            return h.hexdigest()
         except Exception:
             try:
-                data = p.read_bytes()
-                basis = hashlib.sha256(data).hexdigest()
+                st = p.stat()
+                basis = f"{p.name}|{st.st_size}|{int(st.st_mtime)}"
             except Exception:
                 basis = p.name
-        return hashlib.sha256(basis.encode("utf-8")).hexdigest()
+            return hashlib.sha256(basis.encode("utf-8")).hexdigest()
 
     def _get_or_create_cloned_voice_id(self, reference_audio_path: str) -> str:
         if not ELEVENLABS_ENABLE_CLONING:

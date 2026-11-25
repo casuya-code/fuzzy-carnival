@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.config import (
     DEFAULT_CLIP_LENGTH_SEC,
@@ -22,8 +22,10 @@ from app.services.packaging_processor import (
 )
 from app.services.r2_storage import download_reference, upload_output
 from app.services.text_styles import normalize_lower_third, normalize_text_style
+from app.auth import require_api_key
+from app.rate_limit import rate_limit
 
-router = APIRouter(prefix="/api/v1/packaging", tags=["packaging"])
+router = APIRouter(prefix="/api/v1/packaging", tags=["packaging"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 
 DEFAULT_STARTS = [0, 45, 90]
 DEFAULT_PHASES = ["THE HOOK", "THE CLIMAX", "THE REVEAL"]

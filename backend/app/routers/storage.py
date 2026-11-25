@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app.config import (
@@ -12,6 +12,7 @@ from app.config import (
     DEFAULT_OUTRO_SEC,
     MAX_INTRO_SEC,
     MAX_OUTRO_SEC,
+    MAX_UPLOAD_BYTES,
     TEMP_AUDIO_DIR,
 )
 from app.services.audio_processor import (
@@ -28,9 +29,11 @@ from app.services.beat_sync_processor import (
     get_beat_synced_zoom_expr,
 )
 from app.services.r2_storage import download_reference, upload_output
+from app.auth import require_api_key
+from app.rate_limit import rate_limit
 from PIL import ImageFont
 
-router = APIRouter(prefix="/api/v1", tags=["storage"])
+router = APIRouter(prefix="/api/v1", tags=["storage"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 logger = logging.getLogger(__name__)
 
 
@@ -56,14 +59,49 @@ def _safe_local_path(key: str) -> Path:
     return dest
 
 
+_ALLOWED_AUDIO_EXTS = {".wav", ".mp3", ".webm", ".m4a", ".ogg", ".flac", ".aac", ".mp4"}
+_ALLOWED_AUDIO_CT_PREFIXES = ("audio/", "video/mp4", "video/webm", "application/octet-stream")
+
+
 @router.put("/local-upload/{key:path}")
 async def local_upload(key: str, request: Request):
     """Local dev fallback: accept uploaded files when R2 is not configured."""
-    data = await request.body()
     dest = _safe_local_path(key)
+    suffix = dest.suffix.lower()
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if suffix not in _ALLOWED_AUDIO_EXTS:
+        raise HTTPException(status_code=400, detail="Unsupported upload file type")
+    if content_type and not any(content_type == p or content_type.startswith(p) for p in _ALLOWED_AUDIO_CT_PREFIXES):
+        raise HTTPException(status_code=400, detail="Unsupported upload content type")
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail=f"Upload too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
+        except ValueError:
+            pass
+
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
-    return {"ok": True, "key": key}
+    size = 0
+    tmp = dest.with_suffix(dest.suffix + ".uploading")
+    try:
+        with tmp.open("wb") as f:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail=f"Upload too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
+                f.write(chunk)
+        tmp.replace(dest)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+    return {"ok": True, "key": key, "bytes": size}
 
 
 class MixRequest(BaseModel):

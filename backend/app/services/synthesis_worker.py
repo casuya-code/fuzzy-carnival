@@ -11,6 +11,7 @@ import logging
 import multiprocessing as mp
 import os
 import queue
+import time
 import traceback
 import uuid
 from dataclasses import dataclass
@@ -89,6 +90,7 @@ class SynthesisWorker:
         proc = self._proc
         self._proc = None
         job_q = self._job_q
+        result_q = self._result_q
         self._job_q = None
         self._result_q = None
         if proc is not None:
@@ -104,13 +106,17 @@ class SynthesisWorker:
                     proc.join(timeout=2)
             except Exception as e:
                 logger.warning("Failed stopping synthesis worker: %s", e)
-        for q in (job_q,):
+        for q in (job_q, result_q):
             if q is not None:
                 try:
                     q.close()
                     q.join_thread()
                 except Exception:
                     pass
+
+    def stop(self) -> None:
+        with self._start_lock:
+            self._stop_locked()
 
     def restart(self) -> None:
         with self._start_lock:
@@ -132,12 +138,20 @@ class SynthesisWorker:
         p = self._proc
         return bool(p is not None and p.is_alive())
 
-    def submit(self, req_dict: dict[str, Any], *, cancel_event=None, poll_interval: float = 0.5) -> SynthesisJobResult:
+    def submit(
+        self,
+        req_dict: dict[str, Any],
+        *,
+        cancel_event=None,
+        poll_interval: float = 0.5,
+        timeout_sec: float = 900.0,
+    ) -> SynthesisJobResult:
         self._ensure_started()
         assert self._job_q is not None and self._result_q is not None and self._proc is not None
         job_id = uuid.uuid4().hex
+        deadline = time.monotonic() + max(1.0, float(timeout_sec))
         try:
-            self._job_q.put((job_id, req_dict))
+            self._job_q.put((job_id, req_dict), timeout=5)
         except Exception as e:
             self.restart()
             return SynthesisJobResult(ok=False, error_type="WorkerError", error_message=f"Failed to submit synthesis job: {e}")
@@ -146,6 +160,14 @@ class SynthesisWorker:
             if cancel_event is not None and cancel_event.is_set():
                 self.restart()
                 return SynthesisJobResult(ok=False, error_type="Cancelled", error_message="Speech creation cancelled")
+            if time.monotonic() >= deadline:
+                self.restart()
+                return SynthesisJobResult(
+                    ok=False,
+                    error_type="Timeout",
+                    error_message="Synthesis timed out; the worker was restarted",
+                    error_status=504,
+                )
             if self._proc is None or not self._proc.is_alive():
                 self.restart()
                 return SynthesisJobResult(ok=False, error_type="WorkerDied", error_message="Synthesis worker stopped unexpectedly; restarted a fresh worker")

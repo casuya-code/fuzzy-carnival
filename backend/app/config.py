@@ -114,6 +114,17 @@ R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "")
 # Base URL used to serve local files when R2 is not configured (dev fallback)
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
+# --- API auth / abuse controls ----------------------------------------------------
+# If API_KEY is set, mutating/expensive endpoints require it via
+# `Authorization: Bearer <key>` or `X-API-Key: <key>`.
+# Set REQUIRE_AUTH=true to fail closed when no key is configured.
+API_KEY = os.getenv("API_KEY", "").strip()
+REQUIRE_AUTH = _env_bool("REQUIRE_AUTH", False)
+MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 25, min_value=1, max_value=500)
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+SERVE_STATIC = _env_bool("SERVE_STATIC", True)
+EXPOSE_HEALTH_DETAILS = _env_bool("EXPOSE_HEALTH_DETAILS", False)
+
 # --- Memory guard -----------------------------------------------------------------
 # Railway $5 = ~8GB; keep headroom by unloading heavy engines before loading another.
 MAX_RAM_GB = _env_float("MAX_RAM_GB", 7.0, min_value=0.5)
@@ -125,19 +136,19 @@ HEAVY_ENGINE_RAM_GB = _env_float("HEAVY_ENGINE_RAM_GB", 3.0, min_value=0.0)
 _raw_origins = [
     o.strip()
     for o in os.getenv(
-        "ALLOWED_ORIGINS", "http://localhost:3000,https://*.vercel.app"
+        "ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
     ).split(",")
     if o.strip()
 ]
 CORS_ALLOW_ORIGINS = [o for o in _raw_origins if "*" not in o]
-_default_cors_regex = r"^(https://.*\.vercel\.app|http://(localhost|127\.0\.0\.1)(:\d+)?)$"
+_default_cors_regex = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"
 _cors_regex_env = os.getenv("CORS_ORIGIN_REGEX", "").strip()
 if _cors_regex_env:
     try:
         re.compile(_cors_regex_env)
         CORS_ORIGIN_REGEX = _cors_regex_env
     except re.error as e:
-        logger.warning("Invalid CORS_ORIGIN_REGEX=%r (%s); falling back to default", _cors_regex_env, e)
+        logger.warning("Invalid CORS_ORIGIN_REGEX=%r (%s); falling back to localhost-only default", _cors_regex_env, e)
         CORS_ORIGIN_REGEX = _default_cors_regex
 else:
     CORS_ORIGIN_REGEX = _default_cors_regex

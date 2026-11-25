@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from app.config import (
@@ -35,8 +35,10 @@ from app.services.text_styles import (
     normalize_text_style,
     style_summary,
 )
+from app.auth import require_api_key
+from app.rate_limit import rate_limit
 
-router = APIRouter(prefix="/api/v1", tags=["captions"])
+router = APIRouter(prefix="/api/v1", tags=["captions"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 logger = logging.getLogger(__name__)
 
 

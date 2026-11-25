@@ -121,25 +121,31 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
       }
       streamRef.current = stream;
       startLevelMeter(stream);
-      const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+      const mimeType = mimeCandidates.find((m) => {
+        try { return typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m); } catch { return false; }
+      }) || "";
+      const mr = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       chunksRef.current = [];
       mr.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
-      mr.onstop = async () => {
-        stopLevelMeter();
-        stream.getTracks().forEach((t) => t.stop());
-        if (!mountedRef.current) return;
-        if (tooShortRef.current) {
-          // Recording was rejected for being too short — discard the chunks.
-          chunksRef.current = [];
-          return;
-        }
-        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
-        const ext = extensionForType(blob.type);
-        setPreviewExt(ext);
-        setPreview(URL.createObjectURL(blob));
-        await handleUpload(blob, `reference.${ext}`, blob.type || "audio/webm");
+      mr.onstop = () => {
+        void (async () => {
+          stopLevelMeter();
+          stream.getTracks().forEach((t) => t.stop());
+          if (!mountedRef.current) return;
+          if (tooShortRef.current) {
+            // Recording was rejected for being too short — discard the chunks.
+            chunksRef.current = [];
+            return;
+          }
+          const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+          const ext = extensionForType(blob.type);
+          setPreviewExt(ext);
+          setPreview(URL.createObjectURL(blob));
+          await handleUpload(blob, `reference.${ext}`, blob.type || "audio/webm");
+        })();
       };
       mr.start();
       mediaRecorderRef.current = mr;
@@ -154,6 +160,9 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
         setSeconds(secondsRef.current);
       }, 1000);
     } catch (e: any) {
+      stopLevelMeter();
+      try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+      streamRef.current = null;
       if (mountedRef.current) setError(e?.message || "Microphone access was denied. Please allow microphone access and try again.");
     }
   };
@@ -166,7 +175,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
       }
       mediaRecorderRef.current.stop();
       setRecording(false);
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     }
   };
 
@@ -197,7 +206,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
     setError(null);
     setAnalysis(null);
     try {
-      const { upload_url, key } = await requestUploadUrl(filename, contentType);
+      const { upload_url, key } = await requestUploadUrl(filename, contentType, blob.size);
       await uploadToR2(upload_url, blob, contentType);
       if (!mountedRef.current) return;
       onUploaded(key);
@@ -221,10 +230,14 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
   const handleFile = async (file: File) => {
     setError(null);
     setAnalysis(null);
-    const duration = await getMediaDuration(file, "audio");
-    if (duration > 0 && duration < MIN_SECONDS) {
-      setError(`That file is only ${duration.toFixed(1)}s. Please upload at least ${MIN_SECONDS}s of clear speech.`);
-      return;
+    try {
+      const duration = await getMediaDuration(file, "audio");
+      if (duration > 0 && duration < MIN_SECONDS) {
+        setError(`That file is only ${duration.toFixed(1)}s. Please upload at least ${MIN_SECONDS}s of clear speech.`);
+        return;
+      }
+    } catch {
+      // Duration detection is advisory; allow upload to proceed.
     }
     const ct = file.type || "audio/wav";
     const ext = extensionForType(ct, file.name);

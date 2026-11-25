@@ -1,10 +1,12 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from app.config import ENGINE_NAMES
 from app.services.model_manager import CLOUD_ENGINES
 from app.services.text_normalizer import normalize_text
+from app.auth import require_api_key
+from app.rate_limit import rate_limit
 
-router = APIRouter(prefix="/api/v1", tags=["text"])
+router = APIRouter(prefix="/api/v1", tags=["text"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 
 
 class NormalizeRequest(BaseModel):

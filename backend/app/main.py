@@ -18,6 +18,8 @@ from app.config import (
     ENABLE_MMS,
     ENABLE_MSINGI,
     ENGINE_NAMES,
+    EXPOSE_HEALTH_DETAILS,
+    SERVE_STATIC,
     TEMP_AUDIO_DIR,
 )
 from app.routers import captions, packaging, storage, synthesize, text, timeline, video
@@ -36,6 +38,13 @@ async def lifespan(_: FastAPI):
     except Exception as e:
         logger.warning("Engine warmup could not be started: %s", e, exc_info=True)
     yield
+    # Best-effort cleanup: stop synthesis worker so it doesn't linger after shutdown.
+    try:
+        from app.services.synthesis_worker import get_synthesis_worker
+
+        get_synthesis_worker().stop()
+    except Exception as e:
+        logger.warning("Synthesis worker shutdown failed: %s", e, exc_info=True)
 
 
 app = FastAPI(title="Bilingual Voice Clone API", version="1.0.0", lifespan=lifespan)
@@ -59,7 +68,8 @@ app.include_router(timeline.router)
 
 # Serve locally generated files when R2 is not configured (dev fallback).
 # Directory is created once in app.config.
-app.mount("/static", StaticFiles(directory=str(TEMP_AUDIO_DIR)), name="static")
+if SERVE_STATIC:
+    app.mount("/static", StaticFiles(directory=str(TEMP_AUDIO_DIR)), name="static")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -67,16 +77,24 @@ def health():
     loaded: list[str] = []
     issues: list[str] = []
     warmup: dict[str, dict[str, str]] = {}
+    ready = True
     try:
         manager = synthesize.get_manager()
         loaded = manager.loaded_models()
         warmup = manager.warmup_status()
         for name, info in warmup.items():
-            if info.get("status") == "failed":
-                issues.append(f"warmup:{name}: {info.get('error', 'failed')}")
+            status = info.get("status")
+            if status == "failed":
+                ready = False
+                # Do not leak internal exception details by default.
+                logger.warning("Warmup failed for %s: %s", name, info.get("error", "failed"))
+                issues.append(f"warmup:{name}:failed")
+            elif status in {"warming", "pending"}:
+                pass
     except Exception as e:
-        logger.warning("Health check could not list loaded models: %s", e, exc_info=True)
-        issues.append(f"health:{e}")
+        ready = False
+        logger.warning("Health check failed: %s", e, exc_info=True)
+        issues.append("health:unavailable")
 
     engine_flags = {
         "kyutai": ENABLE_KYUTAI,
@@ -86,18 +104,42 @@ def health():
         "azure": ENABLE_AZURE,
         "elevenlabs": ENABLE_ELEVENLABS,
     }
+    worker_alive = False
+    try:
+        from app.services.synthesis_worker import get_synthesis_worker
+
+        worker_alive = bool(get_synthesis_worker().is_alive())
+    except Exception:
+        worker_alive = False
+
+    capabilities = {
+        "azure_configured": bool(AZURE_SPEECH_KEY),
+        "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
+        "elevenlabs_cloning": bool(ELEVENLABS_API_KEY and ELEVENLABS_ENABLE_CLONING),
+        "synthesis_busy": bool(synthesize.is_synthesis_busy()),
+        "worker_alive": worker_alive,
+    }
+    engines = [name for name in ENGINE_NAMES if engine_flags.get(name, False)]
+
+    if not EXPOSE_HEALTH_DETAILS:
+        # Minimal liveness-oriented response for public exposure.
+        return HealthResponse(
+            status="ok" if ready else "degraded",
+            awake=True,
+            ready=ready,
+            loaded_models=[],
+            engines=[],
+            capabilities={},
+            issues=[],
+        )
+
     return HealthResponse(
-        status="ok",
+        status="ok" if ready else "degraded",
         awake=True,
-        ready=True,
+        ready=ready,
         loaded_models=loaded,
-        engines=[name for name in ENGINE_NAMES if engine_flags.get(name, False)],
-        capabilities={
-            "azure_configured": bool(AZURE_SPEECH_KEY),
-            "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
-            "elevenlabs_cloning": bool(ELEVENLABS_API_KEY and ELEVENLABS_ENABLE_CLONING),
-            "synthesis_busy": bool(synthesize.is_synthesis_busy()),
-        },
+        engines=engines,
+        capabilities=capabilities,
         issues=issues,
     )
 

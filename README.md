@@ -132,9 +132,11 @@ uvicorn app.main:app --reload --port 8000
 2. `railway login`
 3. `railway init` (create project)
 4. `railway up` (deploys using Dockerfile)
-5. Set environment variables in Railway dashboard (from `.env.example`),
-   including `HF_TOKEN`, R2 credentials, `ALLOWED_ORIGINS` (your Vercel URL),
-   and (optional but recommended for premium Swahili quality) cloud TTS keys:
+5. Set environment variables in Railway dashboard (from `backend/.env.example`),
+   including `HF_TOKEN`, R2 credentials, and explicit `ALLOWED_ORIGINS`
+   (your Vercel URL). For production, also set `API_KEY` (and optionally
+   `REQUIRE_AUTH=true`), keep `EXPOSE_HEALTH_DETAILS=false`, and configure
+   `MAX_UPLOAD_MB` / rate limits as needed. Optional cloud TTS keys:
    `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, `AZURE_SWAHILI_VOICE`,
    `ELEVENLABS_API_KEY`, `ELEVENLABS_MODEL_ID`, `ELEVENLABS_DEFAULT_VOICE_ID`,
    `ELEVENLABS_ENABLE_CLONING`.
