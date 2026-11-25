@@ -130,6 +130,7 @@ _raw_origins = [
     if o.strip()
 ]
 CORS_ALLOW_ORIGINS = [o for o in _raw_origins if "*" not in o]
+_default_cors_regex = r"^(https://.*\.vercel\.app|http://(localhost|127\.0\.0\.1)(:\d+)?)$"
 _cors_regex_env = os.getenv("CORS_ORIGIN_REGEX", "").strip()
 if _cors_regex_env:
     try:
@@ -137,9 +138,9 @@ if _cors_regex_env:
         CORS_ORIGIN_REGEX = _cors_regex_env
     except re.error as e:
         logger.warning("Invalid CORS_ORIGIN_REGEX=%r (%s); falling back to default", _cors_regex_env, e)
-        CORS_ORIGIN_REGEX = r"https://.*\.vercel\.app" if any("*" in o for o in _raw_origins) else None
+        CORS_ORIGIN_REGEX = _default_cors_regex
 else:
-    CORS_ORIGIN_REGEX = r"https://.*\.vercel\.app" if any("*" in o for o in _raw_origins) else None
+    CORS_ORIGIN_REGEX = _default_cors_regex
 
 # --- Model flags ------------------------------------------------------------------
 ENABLE_KYUTAI = _env_bool("ENABLE_KYUTAI", True)

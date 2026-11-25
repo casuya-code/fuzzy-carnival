@@ -105,7 +105,7 @@ export function addVideoHistory(item: VideoHistoryItem): VideoHistoryItem[] {
 
 // ---------- Unified deliverable history (videos, captions, thumbnails, packages) ----------
 
-export type DeliverableKind = "trimmed" | "captioned" | "thumbnail" | "package";
+export type DeliverableKind = "trimmed" | "captioned" | "thumbnail" | "package" | "preset";
 
 export interface DeliverableItem {
   id: string;
@@ -143,4 +143,8 @@ export function removeDeliverable(url: string): DeliverableItem[] {
 export function clearDeliverables(): void {
   if (typeof window === "undefined") return;
   try { window.localStorage.removeItem(DELIVERABLE_KEY); } catch {}
+}
+
+export function getDeliverableById(id: string): DeliverableItem | null {
+  return loadDeliverables().find((d) => d.id === id) || null;
 }

@@ -620,3 +620,78 @@ def stitch_voice_with_crossfades(
     ]
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     return output_path
+
+
+SFX_KINDS = ("whoosh", "pop", "chime", "click", "applause")
+
+
+def generate_sfx(kind: str, output_path: str, duration_sec: float | None = None) -> str:
+    """Generate a short sound effect locally with FFmpeg (no external assets)."""
+    if not _ffmpeg_available():
+        raise RuntimeError("FFmpeg required for SFX generation")
+    kind = str(kind or "").strip().lower()
+    if kind not in SFX_KINDS:
+        raise ValueError(f"kind must be one of: {', '.join(SFX_KINDS)}")
+
+    defaults = {"whoosh": 0.9, "pop": 0.35, "chime": 1.4, "click": 0.25, "applause": 2.2}
+    dur = float(duration_sec) if duration_sec is not None else defaults[kind]
+    dur = max(0.15, min(5.0, dur))
+
+    if kind == "whoosh":
+        af = (
+            f"anoisesrc=color=pink:sample_rate=44100:amplitude=0.45,"
+            f"highpass=f=250,lowpass=f=4200,"
+            f"afade=t=in:st=0:d={dur * 0.35:.3f},"
+            f"afade=t=out:st={dur * 0.45:.3f}:d={dur * 0.55:.3f},"
+            f"volume=1.4,atrim=0:{dur:.3f},asetpts=N/SR/TB"
+        )
+        cmd = ["ffmpeg", "-nostdin", "-y", "-f", "lavfi", "-i", af]
+    elif kind == "pop":
+        af = (
+            f"sine=f=220:sample_rate=44100,"
+            f"afade=t=in:st=0:d=0.005,"
+            f"afade=t=out:st=0:d={dur:.3f}:curve=exp,"
+            f"volume=0.9,atrim=0:{dur:.3f},asetpts=N/SR/TB"
+        )
+        cmd = ["ffmpeg", "-nostdin", "-y", "-f", "lavfi", "-i", af]
+    elif kind == "chime":
+        af = (
+            f"sine=f=880:sample_rate=44100[s1];"
+            f"sine=f=1320:sample_rate=44100[s2];"
+            f"sine=f=1760:sample_rate=44100[s3];"
+            f"[s1][s2][s3]amix=inputs=3:weights='1 0.55 0.35':normalize=0,"
+            f"afade=t=in:st=0:d=0.01,"
+            f"afade=t=out:st=0:d={dur:.3f}:curve=exp,"
+            f"volume=0.7,atrim=0:{dur:.3f},asetpts=N/SR/TB[out]"
+        )
+        cmd = ["ffmpeg", "-nostdin", "-y", "-filter_complex", af, "-map", "[out]"]
+    elif kind == "click":
+        af = (
+            f"sine=f=1800:sample_rate=44100,"
+            f"afade=t=in:st=0:d=0.001,"
+            f"afade=t=out:st=0:d={dur:.3f}:curve=exp,"
+            f"highpass=f=500,volume=0.8,atrim=0:{dur:.3f},asetpts=N/SR/TB"
+        )
+        cmd = ["ffmpeg", "-nostdin", "-y", "-f", "lavfi", "-i", af]
+    else:  # applause - simple crowd-noise approximation
+        af = (
+            f"anoisesrc=color=brown:sample_rate=44100:amplitude=0.32[n];"
+            f"sine=f=7:sample_rate=44100,volume=0.5,atrim=0:{dur:.3f}[m];"
+            f"[n][m]amix=inputs=2:weights='1 0.35':normalize=0,"
+            f"highpass=f=500,lowpass=f=7500,"
+            f"afade=t=in:st=0:d=0.08,"
+            f"afade=t=out:st={max(0.0, dur - 0.35):.3f}:d=0.35,"
+            f"volume=1.1,atrim=0:{dur:.3f},asetpts=N/SR/TB[out]"
+        )
+        cmd = ["ffmpeg", "-nostdin", "-y", "-filter_complex", af, "-map", "[out]"]
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    suffix = out.suffix.lower()
+    if suffix == ".wav":
+        cmd += ["-c:a", "pcm_s16le", "-ar", "44100", "-ac", "1", str(out)]
+    else:
+        cmd += ["-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "1", str(out)]
+
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    return str(out)

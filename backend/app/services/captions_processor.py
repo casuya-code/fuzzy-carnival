@@ -25,6 +25,13 @@ from app.services.media_math import (
     SAFE_ZONES,
     upscale_dims as _upscale_dims,
 )
+from app.services.text_styles import (
+    ass_color,
+    has_lower_third,
+    normalize_lower_third,
+    normalize_text_style,
+    style_to_ass_style,
+)
 
 HIGHLIGHT = "&H00FFFF&"  # ASS BGR -> bright yellow
 BASE = "&HFFFFFF&"       # white
@@ -77,19 +84,37 @@ def time_words(
     return out
 
 
-def _ass_style(zone: dict, font_size: int | None, outline: int) -> str:
-    font = int(font_size or zone["font"])
-    return (
-        "Style: ViralCap,DejaVu Sans,{font},&H00FFFFFF,&H0000FFFF,&H00000000,"
-        "&H80000000,-1,0,0,0,100,100,0,0,1,{outline},2,{align},{ml},{mr},{mv},1"
-    ).format(
-        font=font,
-        outline=outline,
-        align=zone["align"],
-        ml=zone["ml"],
-        mr=zone["mr"],
-        mv=zone["mv"],
-    )
+def _resolve_font_family(font_path: str | None) -> str | None:
+    if not font_path:
+        return None
+    path = Path(font_path)
+    if not path.is_file():
+        return None
+    try:
+        from PIL import ImageFont
+        family, _style = ImageFont.truetype(str(path), 24).getname()
+        return family or path.stem
+    except Exception:
+        return None
+
+
+def _ass_style(
+    zone: dict,
+    font_size: int | None,
+    outline: int,
+    caption_style=None,
+    font_path: str | None = None,
+) -> tuple[str, dict]:
+    """Build the caption style line and return the normalized style as well."""
+    style = normalize_text_style(caption_style)
+    if font_size is not None:
+        style["font_scale"] = max(70, min(140, int(round(font_size / zone["font"] * 100))))
+    if outline != 5:
+        style["outline_width"] = max(0, min(12, int(outline)))
+    family = _resolve_font_family(font_path)
+    if family:
+        style["font_family"] = family
+    return style_to_ass_style("ViralCap", style, zone), style
 
 
 def chunk_count(word_count: int, words_per_chunk: int) -> int:
@@ -109,10 +134,32 @@ def generate_word_by_word_ass(
     outline: int = 5,
     highlight_color: str = HIGHLIGHT,
     base_color: str = BASE,
+    caption_style=None,
+    lower_third=None,
+    lower_third_duration_sec: float = 5.0,
+    font_path: str | None = None,
 ) -> str:
-    """Generate a timed .ass file with karaoke-style active-word highlighting."""
+    """Generate a timed .ass file with karaoke captions and optional lower third."""
     zone = SAFE_ZONES.get(aspect_ratio, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
     words_per_chunk = max(1, min(int(words_per_chunk), MAX_WORDS_PER_CHUNK))
+    caption_line, style = _ass_style(zone, font_size, outline, caption_style, font_path=font_path)
+    lower = normalize_lower_third(lower_third)
+    show_lower = has_lower_third(lower)
+
+    style_lines = [caption_line]
+    if show_lower:
+        style_lines.append(
+            style_to_ass_style(
+                "LowerThird",
+                style,
+                zone,
+                font_multiplier=0.78,
+                position="bottom",
+                alignment="left",
+                background_opacity=max(70, int(style["background_opacity"])),
+                margin_v=min(zone["h"] - 80, zone["mv"] + int(zone["h"] * 0.28)),
+            )
+        )
 
     header = (
         "[Script Info]\n"
@@ -127,12 +174,14 @@ def generate_word_by_word_ass(
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
         "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
         "MarginL, MarginR, MarginV, Encoding\n"
-        f"{_ass_style(zone, font_size, outline)}\n"
-        "\n"
+        + "".join(f"{line}\n" for line in style_lines)
+        + "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
+    active_color = ass_color(style["highlight_color"])
+    inactive_color = ass_color(style["base_color"])
     timings = time_words(script_text, voice_duration, intro_delay_sec)
     lines = []
     for i in range(0, len(timings), words_per_chunk):
@@ -142,7 +191,7 @@ def generate_word_by_word_ass(
             for j, item in enumerate(chunk):
                 display = item["word"].upper()
                 if j == active_idx:
-                    styled.append(f"{{\\c{highlight_color}}}{display}{{\\c{base_color}}}")
+                    styled.append(f"{{\\c{active_color}}}{display}{{\\c{inactive_color}}}")
                 else:
                     styled.append(display)
             text = " ".join(styled)
@@ -151,13 +200,25 @@ def generate_word_by_word_ass(
                 f"ViralCap,,0,0,0,,{text}"
             )
 
+    if show_lower:
+        pieces = [(key, lower[key]) for key in ("speaker", "location", "topic") if lower[key]]
+        styled = [
+            f"{{\\c{active_color if i == 0 else inactive_color}}}{value}"
+            for i, (_key, value) in enumerate(pieces)
+        ]
+        shown_for = max(1.0, min(15.0, float(lower_third_duration_sec)))
+        lines.append(
+            f"Dialogue: 0,0:00:00.00,{format_ass_time(shown_for)},"
+            f"LowerThird,,0,0,0,,{'  •  '.join(styled)}"
+        )
+
     dest = Path(ass_output_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(header + "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return str(dest)
 
 
-def ass_filter_arg(ass_path: str, working_dir: str | None = None) -> str:
+def ass_filter_arg(ass_path: str, working_dir: str | None = None, fontsdir: str | None = None) -> str:
     """Return a libass filter argument, escaped for FFmpeg's filtergraph parser.
 
     Running FFmpeg with cwd=the .ass directory lets us pass a bare filename,
@@ -168,7 +229,11 @@ def ass_filter_arg(ass_path: str, working_dir: str | None = None) -> str:
     else:
         name = os.path.abspath(ass_path).replace("\\", "/").replace(":", "\\:")
     name = name.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-    return f"ass='{name}'"
+    arg = f"ass='{name}'"
+    if fontsdir:
+        fd = os.path.abspath(fontsdir).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        arg = f"ass='{name}':fontsdir='{fd}'"
+    return arg
 
 
 def burn_captions_onto_video(
@@ -178,14 +243,16 @@ def burn_captions_onto_video(
     aspect_ratio: str = DEFAULT_ASPECT_RATIO,
     upscale_2k: bool = False,
     loudnorm: bool = False,
+    font_path: str | None = None,
 ) -> str:
     """Burn the .ass file into the video with libass and export social-ready audio/video."""
     in_abs = os.path.abspath(input_video_path)
     out_abs = os.path.abspath(output_video_path)
     ass_abs = os.path.abspath(ass_path)
     work_dir = os.path.dirname(ass_abs)
+    fontsdir = str(Path(font_path).parent) if font_path and Path(font_path).is_file() else None
 
-    vf_parts = [ass_filter_arg(ass_abs, working_dir=work_dir)]
+    vf_parts = [ass_filter_arg(ass_abs, working_dir=work_dir, fontsdir=fontsdir)]
     dims = _upscale_dims(aspect_ratio, upscale_2k)
     if dims:
         vf_parts.append(f"scale={dims[0]}:{dims[1]}:flags=lanczos")

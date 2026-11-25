@@ -1,6 +1,7 @@
 "use client";
 
 import { ENGINE_LABEL, ENGINES_BY_LANGUAGE, type Engine, type Language } from "@/lib/api";
+import InfoTip from "@/components/InfoTip";
 
 interface Props {
   engine: Engine;
@@ -13,6 +14,7 @@ interface Props {
 type EngineMeta = {
   id: Engine;
   desc: string;
+  tip: string;
   bestFor: string;
   usesSample: boolean;
   tier: "online" | "server";
@@ -23,46 +25,52 @@ const ENGINES: EngineMeta[] = [
   // English
   {
     id: "kyutai",
-    desc: "Copies your voice sample to read English text.",
-    bestFor: "Custom English voiceovers",
+    desc: "Your cloned voice · English",
+    tip: "Copies your voice sample to read English text.",
+    bestFor: "English voiceovers",
     usesSample: true,
     tier: "server",
   },
   {
     id: "afrispeech",
-    desc: "Copies your voice sample with an East African English style.",
-    bestFor: "English with African accent",
+    desc: "Your cloned voice · African English",
+    tip: "Copies your voice sample with an East African English style.",
+    bestFor: "African-accented English",
     usesSample: true,
     tier: "server",
   },
   // Swahili
   {
     id: "azure",
-    desc: "High-quality, clear Swahili narration (preset voice).",
-    bestFor: "Stories, documentaries, and clear Swahili narration",
+    desc: "Clear Swahili · preset voice",
+    tip: "High-quality Swahili narration with a preset voice. Falls back to the basic Swahili voice if online quota is used.",
+    bestFor: "Stories & narration",
     usesSample: false,
     tier: "online",
-    badge: "Recommended for Swahili",
+    badge: "Best for SW",
   },
   {
     id: "msingi",
-    desc: "Tries to copy your voice sample for Swahili (runs on the server).",
-    bestFor: "Custom Swahili voice when you have a sample",
+    desc: "Your cloned voice · Swahili",
+    tip: "Tries to copy your voice sample for Swahili. Runs on the server.",
+    bestFor: "Custom Swahili voice",
     usesSample: true,
     tier: "server",
   },
   {
     id: "mms",
-    desc: "Simple, reliable Swahili voice (preset). Good fallback when online quota is used.",
-    bestFor: "Quick drafts and backup narration",
+    desc: "Basic Swahili · preset voice",
+    tip: "Simple, reliable Swahili voice. Good fallback when the online voice is busy or out of quota.",
+    bestFor: "Drafts & backup",
     usesSample: false,
     tier: "server",
   },
   // Multilingual cloud
   {
     id: "elevenlabs",
-    desc: "Expressive voice for English or Swahili. Can use your voice sample for cloning when voice cloning is enabled, or use a preset voice.",
-    bestFor: "Expressive narration, character-style reads, and custom cloned voices",
+    desc: "Expressive · EN or SW",
+    tip: "Expressive voice for English or Swahili. Uses your voice sample for cloning when enabled, otherwise a preset voice.",
+    bestFor: "Characters & hooks",
     usesSample: true,
     tier: "online",
   },
@@ -79,13 +87,18 @@ export default function EngineSelector({ engine, onChange, language, availableEn
     <section className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm space-y-4">
       <div className="flex items-start justify-between gap-3 border-b pb-3">
         <div>
-          <h3 className="text-base sm:text-lg font-semibold">Step 2: Choose a voice</h3>
-          <p className="mt-1 text-sm text-gray-600">
-            Pick how you want your text to sound. {language === "sw" ? "For most Swahili projects, the natural online voice is the best starting point." : "Use a voice-clone option if you added a sample."}
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-base sm:text-lg font-semibold">Voice</h3>
+            <InfoTip
+              text={language === "sw" ? "For most Swahili projects, the online voice is the best start." : "Use a voice-clone option if you added a sample."}
+              label="Choose a voice"
+              placement="bottom"
+            />
+          </div>
+          <p className="mt-1 text-sm text-gray-600">Pick how your text sounds.</p>
         </div>
         <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 shrink-0">
-          {filtered.length} options
+          {filtered.length}
         </span>
       </div>
 
@@ -115,6 +128,7 @@ export default function EngineSelector({ engine, onChange, language, availableEn
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="font-semibold text-gray-900">{ENGINE_LABEL[e.id]}</div>
+                    <InfoTip text={e.tip} label={ENGINE_LABEL[e.id]} placement="bottom" focusable={false} />
                     {e.badge && (
                       <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                         {e.badge}
@@ -123,12 +137,12 @@ export default function EngineSelector({ engine, onChange, language, availableEn
                   </div>
                   <p className="mt-1 text-sm text-gray-600">{e.desc}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
-                    <span className="rounded-md bg-gray-100 px-2 py-0.5 text-gray-700">Best for: {e.bestFor}</span>
+                    <span className="rounded-md bg-gray-100 px-2 py-0.5 text-gray-700">For: {e.bestFor}</span>
                     <span className={`rounded-md px-2 py-0.5 ${e.usesSample ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-700"}`}>
-                      {e.usesSample ? "Uses your voice sample" : "Preset voice"}
+                      {e.usesSample ? "Your sample" : "Preset"}
                     </span>
                     <span className={`rounded-md px-2 py-0.5 ${e.tier === "online" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                      {e.tier === "online" ? "Online voice" : "Runs on server"}
+                      {e.tier === "online" ? "Online" : "Server"}
                     </span>
                   </div>
                 </div>
@@ -140,9 +154,10 @@ export default function EngineSelector({ engine, onChange, language, availableEn
       </div>
 
       {language === "sw" && (
-        <p className="text-xs text-gray-500">
-          Tip: If the online Swahili voice is busy or out of quota, the app can automatically switch to the basic Swahili voice for that request.
-        </p>
+        <div className="flex items-center gap-1.5 text-xs text-gray-500">
+          <span>Auto-fallback</span>
+          <InfoTip text="If the online Swahili voice is busy or out of quota, the app switches to the basic Swahili voice for that request." label="Auto-fallback" />
+        </div>
       )}
     </section>
   );

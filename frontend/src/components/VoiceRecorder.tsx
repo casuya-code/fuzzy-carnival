@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import InfoTip from "@/components/InfoTip";
 import { analyzeAudio, ReferenceAnalysis, requestUploadUrl, uploadToR2 } from "@/lib/api";
 import { getMediaDuration } from "@/lib/media";
 
@@ -252,9 +253,12 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
     <section className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm space-y-4">
       <div className="flex items-start justify-between gap-3 border-b pb-3">
         <div>
-          <h3 className="text-base sm:text-lg font-semibold">Step 1: Add a voice sample</h3>
+          <h3 className="text-base sm:text-lg font-semibold">Step 1: Voice sample</h3>
           <p className="mt-1 text-sm text-gray-600">
-            Optional for some voices. Record or upload 10–15 seconds of clear speech if you want the app to copy that voice.
+            <InfoTip
+              text="Optional for some voices; 10–15s of clear speech lets the app copy that voice."
+              label="Voice sample details"
+            />
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -287,8 +291,10 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
           <div className="mt-0.5 font-medium text-gray-800">{denoiseRef ? "On" : "Off"}</div>
         </div>
         <div className="rounded-lg border bg-gray-50/60 px-3 py-2">
-          <div className="text-xs uppercase tracking-wide text-gray-500">Recording time</div>
-          <div className="mt-0.5 font-medium text-gray-800">{seconds}s <span className="text-gray-500 font-normal">(aim for 10–15s)</span></div>
+          <div className="text-xs uppercase tracking-wide text-gray-500">
+            Time <InfoTip text="Aim for 10–15 seconds." label="Recording time" />
+          </div>
+          <div className="mt-0.5 font-medium text-gray-800">{seconds}s</div>
         </div>
       </div>
 
@@ -298,14 +304,16 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
           onClick={() => setMode("record")}
           className={`rounded-lg border px-3 py-2.5 text-sm font-medium transition ${mode === "record" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
         >
-          Record with microphone
+          Record{" "}
+          <InfoTip text="Record a sample with your microphone." label="Record details" focusable={false} />
         </button>
         <button
           type="button"
           onClick={() => setMode("upload")}
           className={`rounded-lg border px-3 py-2.5 text-sm font-medium transition ${mode === "upload" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
         >
-          Upload audio file
+          Upload{" "}
+          <InfoTip text="Upload a saved voice sample file." label="Upload details" focusable={false} />
         </button>
       </div>
 
@@ -346,13 +354,14 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
           {recording && (
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs text-gray-600">
-                <span>Microphone level</span>
+                <span>
+                  Mic level <InfoTip text="Speak clearly in a quiet room, at a steady distance from the microphone." label="Microphone tips" />
+                </span>
                 <span>{level < 0.05 ? "Very quiet" : level > 0.85 ? "Too loud" : "Good"}</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-gray-200">
                 <div className="h-full rounded-full bg-green-500 transition-all duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
               </div>
-              <p className="text-xs text-gray-500">Speak clearly in a quiet room, at a steady distance from the microphone.</p>
             </div>
           )}
         </div>
@@ -375,9 +384,18 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
             disabled={uploading}
             className="w-full rounded-lg border-2 border-dashed border-gray-300 p-5 text-sm text-gray-700 transition hover:border-blue-400 hover:bg-blue-50 disabled:opacity-50"
           >
-            {uploading ? "Uploading..." : "Click to choose an audio file (WAV, MP3, WebM, M4A...)"}
+            {uploading ? (
+              "Uploading..."
+            ) : (
+              <>
+                Choose audio file{" "}
+                <InfoTip text="WAV, MP3, WebM, M4A and more." label="Audio file formats" focusable={false} />
+              </>
+            )}
           </button>
-          <p className="text-xs text-gray-500">Tip: Use the same voice sample for a series to keep the voice consistent.</p>
+          <p className="text-xs text-gray-500">
+            Consistent voice <InfoTip text="Use the same voice sample for a series to keep the voice consistent." label="Voice consistency" />
+          </p>
         </div>
       )}
 
@@ -388,7 +406,11 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-sm">Sound quality: {qualityLabel(analysis.quality_score).text}</span>
             <span className="text-xs opacity-80">({Math.round(analysis.quality_score)}/100)</span>
-            {analysis.clipping && <span className="text-xs font-medium">Audio may be too loud (clipping)</span>}
+            {analysis.clipping && (
+              <span className="text-xs font-medium">
+                Clipping <InfoTip text="The audio may be too loud." label="Clipping details" />
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 text-[11px] font-mono">
             {[
@@ -416,44 +438,50 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
       {previewUrl && (
         <div className="rounded-lg border bg-gray-50 p-3 space-y-2">
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <p className="text-sm font-medium text-gray-700">Listen to your sample</p>
+            <p className="text-sm font-medium text-gray-700">
+              Listen to your sample{" "}
+              <InfoTip text="If it sounds unclear, too quiet, or noisy, record again for better results." label="Sample preview tips" />
+            </p>
             <a href={previewUrl} download={`voice-sample.${previewExt}`} className="text-sm text-blue-600 hover:underline shrink-0">
               Save sample
             </a>
           </div>
           <audio controls src={previewUrl} className="w-full h-9" />
-          <p className="text-xs text-gray-500">If it sounds unclear, too quiet, or noisy, record again for better results.</p>
         </div>
       )}
 
       <label className="flex items-start gap-2.5 text-sm text-gray-700 cursor-pointer select-none rounded-lg border p-3 bg-white">
         <input type="checkbox" className="mt-0.5" checked={denoiseRef} onChange={(e) => onDenoiseChange(e.target.checked)} />
         <span>
-          <span className="font-medium">Clean up background noise</span>
-          <span className="block text-xs text-gray-500 mt-0.5">Recommended for clearer, more stable voice copying.</span>
+          <span className="font-medium">
+            Noise cleanup <InfoTip text="Recommended for clearer, more stable voice copying." label="Noise cleanup details" focusable={false} />
+          </span>
         </span>
       </label>
 
       <div className="text-sm space-y-2">
         {recording && (
-          <p className="text-blue-700 font-medium">Recording... Speak naturally, with the same energy you want in the final audio.</p>
+          <p className="text-blue-700 font-medium">
+            Recording… <InfoTip text="Use the energy you want in the final audio." label="Recording tip" />
+          </p>
         )}
         {uploading && <p className="text-amber-700 font-medium">Uploading your voice sample...</p>}
         {done && hasVoice && !recording && !uploading && (
           <div className="space-y-1 rounded-lg bg-green-50 border border-green-100 p-3">
-            <p className="text-green-700 font-medium">Voice sample ready.</p>
-            <p className="text-gray-700 text-sm">You can use this sample with voices that copy your voice. For best results, use a clear 10–15 second recording.</p>
+            <p className="text-green-700 font-medium">
+              Sample ready <InfoTip text="Use this sample with voices that copy your voice. For best results, use a clear 10–15 second recording." label="Sample details" />
+            </p>
           </div>
         )}
         {!recording && !uploading && !done && (
           <div className="text-gray-700 space-y-1.5">
-            <p className="font-medium">Tips for a good voice sample</p>
-            <ul className="list-disc pl-5 space-y-1 text-gray-600">
-              <li>Record <strong>10–15 seconds</strong> of natural speech (at least {MIN_SECONDS}s).</li>
-              <li>Use <strong>one voice only</strong> in a quiet place.</li>
-              <li>Keep the microphone at a steady distance and avoid background music/noise.</li>
-              <li>Speak with the energy/style you want copied (calm, lively, etc.).</li>
-            </ul>
+            <p className="font-medium">
+              Voice sample tips{" "}
+              <InfoTip
+                text={`10–15s of natural speech (at least ${MIN_SECONDS}s); one voice in a quiet place; steady mic distance, no background music/noise; speak with the energy/style you want copied.`}
+                label="Voice sample tips"
+              />
+            </p>
           </div>
         )}
       </div>

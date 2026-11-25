@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ENGINE_LABEL, Engine, SynthesizeResponse, SynthesizeRequest, synthesize, transformAudio } from "@/lib/api";
+import InfoTip from "@/components/InfoTip";
 
 interface Props {
   result: SynthesizeResponse | null;
@@ -87,7 +88,7 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
     return (
       <section className="rounded-xl border border-dashed bg-white p-6 sm:p-8 text-center shadow-sm">
         <div className="text-base font-medium text-gray-700">Your audio will appear here</div>
-        <div className="mt-2 text-sm text-gray-500">Write your text in Step 3 and click <span className="font-medium">Create speech</span>.</div>
+        <div className="mt-2 flex justify-center text-sm text-gray-500"><InfoTip text="Write your text in Step 3 and click Create speech." label="Create audio" /></div>
       </section>
     );
   }
@@ -101,17 +102,16 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
         <div className="flex items-start justify-between gap-3 border-b pb-3 flex-wrap">
           <div>
             <h3 className="text-base sm:text-lg font-semibold">Your audio</h3>
-            <p className="mt-1 text-sm text-gray-600">Listen, download, or create another version.</p>
+            <p className="mt-1 text-sm text-gray-600"><InfoTip text="Listen, download, or create another version." label="Audio actions" /></p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {lastReq && (
               <button
                 onClick={newTake}
                 disabled={regenLoading}
-                className="rounded-lg border border-purple-300 bg-purple-50 px-3 py-1.5 text-sm font-medium text-purple-700 transition hover:bg-purple-100 disabled:opacity-50"
-                title="Create a fresh version with the same settings"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-purple-300 bg-purple-50 px-3 py-1.5 text-sm font-medium text-purple-700 transition hover:bg-purple-100 disabled:opacity-50"
               >
-                {regenLoading ? "Creating..." : "Try another version"}
+                {regenLoading ? "Creating..." : "New take"} <InfoTip text="Creates a fresh version with the same settings." label="New take" focusable={false} />
               </button>
             )}
             <button
@@ -174,8 +174,7 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
 
         <div className="rounded-lg border bg-gray-50/40 p-3 sm:p-4 space-y-3">
           <div>
-            <div className="text-sm font-semibold text-gray-800">Make a downloadable version</div>
-            <p className="mt-1 text-sm text-gray-600">Adjust speed and volume, then create a new MP3 file to download.</p>
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">Customize audio <InfoTip text="Adjust speed and volume, then create a new MP3 file to download." label="Customize audio" /></div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -221,9 +220,9 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
               type="button"
               onClick={renderExport}
               disabled={rendering}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
-              {rendering ? "Preparing download..." : "Prepare downloadable MP3"}
+              {rendering ? "Preparing…" : "Prepare MP3"} <InfoTip text="Applies your speed and volume choices." label="Prepare MP3" focusable={false} />
             </button>
             <span className="text-xs text-gray-500">Speed {exportSpeed}x · Volume {exportVolume === 1 ? "normal" : exportVolume < 1 ? "quieter" : "louder"}</span>
           </div>

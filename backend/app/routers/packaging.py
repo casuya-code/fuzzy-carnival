@@ -21,6 +21,7 @@ from app.services.packaging_processor import (
     reexport_master_video,
 )
 from app.services.r2_storage import download_reference, upload_output
+from app.services.text_styles import normalize_lower_third, normalize_text_style
 
 router = APIRouter(prefix="/api/v1/packaging", tags=["packaging"])
 
@@ -125,21 +126,30 @@ async def packaging_thumbnail(
     accent: str = Form("yellow"),
     gradient: str = Form("left"),
     border: bool = Form(True),
+    frame: str = Form("solid"),
+    shape: str = Form("none"),
     font_path: Optional[str] = Form(None),
     topic: str = Form("Untitled"),
     language: str = Form("en"),
+    text_style: Optional[str] = Form(None),
 ):
     """Generate just the designed thumbnail (fast preview, no Shorts render)."""
     _validate(bool(master_video), bool(master_r2_key), hook_words, accent, gradient)
+    if frame not in ("none", "solid", "double", "film"):
+        raise HTTPException(status_code=400, detail="Invalid frame")
+    if shape not in ("none", "circle", "rect"):
+        raise HTTPException(status_code=400, detail="Invalid shape")
     job_id = uuid.uuid4().hex
     work_dir = TEMP_AUDIO_DIR / "packaging_jobs" / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
     try:
+        style = normalize_text_style(text_style)
         master = _resolve_master(master_video, master_r2_key, work_dir)
         thumb = str(work_dir / "youtube_thumbnail.jpg")
         generate_viral_thumbnail(
             master, thumb, hook_words=hook_words, font_path=font_path,
-            accent=accent, gradient=gradient, border=border,
+            accent=accent, gradient=gradient, border=border, text_style=style,
+            frame=frame, shape=shape,
         )
         date_str, time_str = get_eat_parts()
         key = build_video_r2_key("Thumb_1280x720", language, topic, "jpg", date_str, time_str)
@@ -153,6 +163,9 @@ async def packaging_thumbnail(
             "hook_words": words,
             "accent": accent,
             "gradient": gradient,
+            "frame": frame,
+            "shape": shape,
+            "text_style": style,
         }
     except HTTPException:
         raise
@@ -175,6 +188,8 @@ async def packaging_publish(
     accent: str = Form("yellow"),
     gradient: str = Form("left"),
     border: bool = Form(True),
+    frame: str = Form("solid"),
+    shape: str = Form("none"),
     shorts_title: str = Form(""),
     clip_length_sec: int = Form(DEFAULT_CLIP_LENGTH_SEC),
     start_times: Optional[str] = Form(None),
@@ -184,13 +199,21 @@ async def packaging_publish(
     language: str = Form("en"),
     upscale_2k: bool = Form(False),
     loudnorm: bool = Form(False),
+    text_style: Optional[str] = Form(None),
+    lower_third: Optional[str] = Form(None),
 ):
     """Publish the full package: 16:9 master + designed thumbnail + 3 vertical Shorts."""
     _validate(bool(master_video), bool(master_r2_key), hook_words, accent, gradient, clip_length_sec)
+    if frame not in ("none", "solid", "double", "film"):
+        raise HTTPException(status_code=400, detail="Invalid frame")
+    if shape not in ("none", "circle", "rect"):
+        raise HTTPException(status_code=400, detail="Invalid shape")
     job_id = uuid.uuid4().hex
     work_dir = TEMP_AUDIO_DIR / "packaging_jobs" / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
     try:
+        style = normalize_text_style(text_style)
+        lower = normalize_lower_third(lower_third)
         master = _resolve_master(master_video, master_r2_key, work_dir)
 
         # Optional social export pass for the master (YouTube 2K upscale / loudness normalization)
@@ -208,7 +231,8 @@ async def packaging_publish(
         thumb = str(work_dir / "youtube_thumbnail.jpg")
         generate_viral_thumbnail(
             export_master, thumb, hook_words=hook_words, font_path=font_path,
-            accent=accent, gradient=gradient, border=border,
+            accent=accent, gradient=gradient, border=border, text_style=style,
+            frame=frame, shape=shape,
         )
 
         # 2) Three hook-driven vertical Shorts
@@ -243,6 +267,8 @@ async def packaging_publish(
             phases=phase_names,
             accent=accent,
             font_path=font_path,
+            text_style=style,
+            lower_third=lower,
         )
 
         # 3) Upload all 5 deliverables to R2 (or /static in local dev)
@@ -287,6 +313,8 @@ async def packaging_publish(
             "master_url": master_url,
             "thumbnail_url": thumb_url,
             "short_urls": [s["url"] for s in uploaded_shorts],
+            "text_style": style,
+            "lower_third": lower,
             # Report the uploaded deliverable, not the pre-export master.
             "duration_seconds": get_duration(export_master),
         }

@@ -19,6 +19,7 @@ import EngineSelector from "@/components/EngineSelector";
 import TextToSpeechForm from "@/components/TextToSpeechForm";
 import AudioPlayer from "@/components/AudioPlayer";
 import SpeechTimelineSidebar from "@/components/SpeechTimelineSidebar";
+import InfoTip from "@/components/InfoTip";
 
 export default function TextToSpeechPage() {
   const [language, setLanguage] = useState<"en" | "sw">("en");
@@ -186,10 +187,10 @@ export default function TextToSpeechPage() {
 
   const statusText =
     backendStatus === "awake"
-      ? "Online and ready"
+      ? "Ready"
       : backendStatus === "checking"
-        ? "Checking connection..."
-        : "Waking up (first request may take a little longer)";
+        ? "Checking..."
+        : "Waking up";
 
   const activeAudioUrl = result?.audio_url;
 
@@ -198,11 +199,11 @@ export default function TextToSpeechPage() {
       <header className="rounded-xl border bg-white p-4 sm:p-6 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">🎙️ Text to Speech</h1>
-            <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-2xl">
-              Turn your text into natural speech in English or Swahili. Add a voice sample to copy a voice (for supported options),
-              choose a voice, then create and download your audio.
-            </p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">🎙️ Speech</h1>
+              <InfoTip text="Turn text into speech in English or Swahili. Add a sample to clone a voice (supported engines), pick a voice, then create and download." label="Text to speech" />
+            </div>
+            <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-2xl">Text → speech in EN or SW.</p>
           </div>
           <div className="flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-xs sm:text-sm shadow-sm self-start" title={healthDetail}>
             <span
@@ -226,9 +227,7 @@ export default function TextToSpeechPage() {
               {statusText}
             </span>
             {health && (
-              <span className="hidden sm:inline text-[10px] text-gray-500">
-                awake: {String(health.awake)}{health.loaded_models?.length ? ` · ${health.loaded_models.length} models` : ""}{health.engines?.length ? ` · ${health.engines.length} engines` : ""}
-              </span>
+              <InfoTip text={healthDetail} label="Backend status" placement="bottom" />
             )}
           </div>
         </div>
@@ -237,8 +236,8 @@ export default function TextToSpeechPage() {
           {[
             { label: "Language", value: language === "en" ? "English" : "Swahili" },
             { label: "Voice", value: ENGINE_LABEL[engine] },
-            { label: "Your voice sample", value: voiceKey ? "Added" : "Not added" },
-            { label: "Noise cleanup", value: denoiseRef ? "On" : "Off" },
+            { label: "Sample", value: voiceKey ? "Added" : "None" },
+            { label: "Cleanup", value: denoiseRef ? "On" : "Off" },
           ].map((m) => (
             <div key={m.label} className="rounded-lg border bg-gray-50/60 px-3 py-2.5 min-w-0">
               <div className="text-[11px] uppercase tracking-wide text-gray-500">{m.label}</div>
@@ -250,9 +249,14 @@ export default function TextToSpeechPage() {
         </div>
 
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
-          {["1. Add voice sample (optional)", "2. Choose a voice", "3. Create speech"].map((s) => (
-            <div key={s} className="rounded-lg border border-blue-100 bg-blue-50/40 px-3 py-2 text-blue-900 font-medium">
-              {s}
+          {[
+            { label: "1 · Sample", tip: "Record or upload 10–15 seconds of clear speech to copy your voice." },
+            { label: "2 · Voice", tip: "Pick a preset or a voice that clones your sample." },
+            { label: "3 · Create", tip: "Add your text, then create and download the audio." },
+          ].map((s) => (
+            <div key={s.label} className="flex items-center gap-1.5 rounded-lg border border-blue-100 bg-blue-50/40 px-3 py-2 text-blue-900 font-medium">
+              {s.label}
+              <InfoTip text={s.tip} label={s.label} placement="bottom" />
             </div>
           ))}
         </div>

@@ -1,14 +1,17 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { clearDeliverables, DeliverableItem, loadDeliverables, removeDeliverable } from "@/lib/history";
+import InfoTip from "@/components/InfoTip";
 
 const KIND_LABEL: Record<DeliverableItem["kind"], string> = {
   trimmed: "Trimmed & Zoomed",
   captioned: "Animated Captions",
   thumbnail: "Thumbnail",
   package: "Published Package",
+  preset: "Saved Presets",
 };
 
 const KIND_ICON: Record<DeliverableItem["kind"], string> = {
@@ -16,6 +19,7 @@ const KIND_ICON: Record<DeliverableItem["kind"], string> = {
   captioned: "💬",
   thumbnail: "🖼️",
   package: "📦",
+  preset: "⚙️",
 };
 
 /** Show the metadata we already persist for each deliverable instead of hiding it. */
@@ -26,16 +30,16 @@ function MetaDetails({ meta }: { meta?: Record<string, unknown> }) {
     bits.push(<span key="wh">{meta.width}×{meta.height}</span>);
   }
   if (Array.isArray(meta.hook_words)) {
-    bits.push(<span key="hook">hook: {(meta.hook_words as string[]).join(" / ")}</span>);
+    bits.push(<span key="hook">Hook {(meta.hook_words as string[]).join(" / ")}</span>);
   }
   if (typeof meta.duration_seconds === "number") {
-    bits.push(<span key="t">T={meta.duration_seconds.toFixed(1)}s</span>);
+    bits.push(<span key="t">Length {meta.duration_seconds.toFixed(1)}s</span>);
   }
   if (typeof meta.aspect_ratio === "string") {
     bits.push(<span key="ar">{meta.aspect_ratio}</span>);
   }
   if (typeof meta.start_sec === "number" && typeof meta.length_sec === "number") {
-    bits.push(<span key="range">start {meta.start_sec}s · {meta.length_sec}s</span>);
+    bits.push(<span key="range">Range {meta.start_sec}s · {meta.length_sec}s</span>);
   }
   if (typeof meta.ass_url === "string" && meta.ass_url) {
     bits.push(
@@ -43,6 +47,15 @@ function MetaDetails({ meta }: { meta?: Record<string, unknown> }) {
         soft subs (.ass)
       </a>
     );
+  }
+  if (typeof meta.route === "string" && meta.route) {
+    bits.push(<span key="route">Route {meta.route}</span>);
+  }
+  if (meta.settings && typeof meta.settings === "object") {
+    const s = meta.settings as Record<string, unknown>;
+    if (typeof s.aspect_ratio === "string") bits.push(<span key="psar">{s.aspect_ratio}</span>);
+    if (typeof s.transition === "string") bits.push(<span key="pstr">{s.transition}</span>);
+    if (typeof s.overlay === "string" && s.overlay !== "none") bits.push(<span key="psov">{s.overlay}</span>);
   }
   if (bits.length === 0) return null;
   return (
@@ -53,6 +66,7 @@ function MetaDetails({ meta }: { meta?: Record<string, unknown> }) {
 }
 
 export default function HistoryPage() {
+  const router = useRouter();
   const [items, setItems] = useState<DeliverableItem[]>([]);
 
   useEffect(() => {
@@ -69,7 +83,7 @@ export default function HistoryPage() {
     setItems([]);
   };
 
-  const grouped = (["trimmed", "captioned", "thumbnail", "package"] as const).map((kind) => ({
+  const grouped = (["preset", "trimmed", "captioned", "thumbnail", "package"] as const).map((kind) => ({
     kind,
     list: items.filter((i) => i.kind === kind),
   }));
@@ -80,7 +94,7 @@ export default function HistoryPage() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">🗂️ My Files</h1>
           <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-2xl">
-            Your recent videos, thumbnails, and ready-to-post packages appear here.
+            Recent saved files. <InfoTip text="Videos, thumbnails and packages you created appear here." label="My Files details" />
           </p>
         </div>
         {items.length > 0 && (
@@ -95,10 +109,10 @@ export default function HistoryPage() {
 
       {items.length === 0 && (
         <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center shadow-sm">
-          <div className="text-base font-medium text-gray-700">No saved videos, thumbnails, or packages yet</div>
+          <div className="text-base font-medium text-gray-700">Nothing saved yet</div>
           <p className="mt-2 text-sm text-gray-500">
-            When you create or export videos, captions, thumbnails, or ready-to-post packages, they will appear here.
-            Generated speech files are saved separately for reuse in <span className="font-medium">Text to Speech</span> and <span className="font-medium">Add Music &amp; Sounds</span>.
+            Exports appear here.{" "}
+            <InfoTip text="Speech files are kept in the audio tools instead." label="Where speech files go" />
           </p>
         </div>
       )}
@@ -156,6 +170,13 @@ export default function HistoryPage() {
                         </a>
                       )}
                     </div>
+                  ) : item.kind === "preset" ? (
+                    <div className="mt-3 rounded border bg-gray-50 p-3 text-xs text-gray-600">
+                      <div className="font-medium text-gray-700">Preset settings</div>
+                      <div className="mt-1 text-[11px] text-gray-500">
+                        {typeof item.meta?.route === "string" ? `Opens ${item.meta.route}` : "Saved settings"}
+                      </div>
+                    </div>
                   ) : (
                     <video
                       src={item.url}
@@ -169,16 +190,28 @@ export default function HistoryPage() {
                   <MetaDetails meta={item.meta} />
 
                   <div className="mt-3 flex gap-2">
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      download
-                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
-                    >
-                      Download
-                    </a>
-                    {item.r2_key && (
+                    {item.kind === "preset" ? (
+                      <button
+                        onClick={() => {
+                          const route = typeof item.meta?.route === "string" ? item.meta.route : "/publish-package";
+                          router.push(`${route}?preset=${encodeURIComponent(item.id)}`);
+                        }}
+                        className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                      >
+                        Load
+                      </button>
+                    ) : (
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        download
+                        className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+                      >
+                        Download
+                      </a>
+                    )}
+                    {item.kind !== "preset" && item.r2_key && (
                       <span className="truncate text-[10px] text-gray-400">{item.r2_key}</span>
                     )}
                   </div>

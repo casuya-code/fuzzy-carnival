@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildSpeechTimeline, TimelineSegment } from "@/lib/api";
+import InfoTip from "@/components/InfoTip";
 
 interface Props {
   audioUrl?: string | null;
@@ -221,16 +222,16 @@ export default function SpeechTimelineSidebar({
 
   const sourceLabel =
     source === "provider"
-      ? "Provider timestamps"
+      ? "Provider"
       : source === "alignment"
-        ? "Forced alignment"
+        ? "Aligned"
         : source === "estimated"
-          ? "Estimated (script + duration)"
+          ? "Estimated"
           : source === "edited"
             ? "Edited"
             : source
               ? source
-              : "Not generated";
+              : "None";
 
   return (
     <aside className="rounded-xl border bg-white shadow-sm overflow-hidden">
@@ -239,9 +240,9 @@ export default function SpeechTimelineSidebar({
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50"
       >
-        <div>
-          <div className="text-sm font-semibold text-gray-900">Speech-to-Timeline</div>
-          <div className="text-xs text-gray-500">Phrase timings for captions, clip planning, and prompts</div>
+        <div className="flex items-center gap-1.5">
+          <div className="text-sm font-semibold text-gray-900">Speech timeline</div>
+          <InfoTip text="Phrase timings for captions, clip planning, and prompts." label="Speech timeline" focusable={false} />
         </div>
         <span className="text-xs font-medium text-gray-500">{open ? "Hide" : "Show"}</span>
       </button>
@@ -251,7 +252,7 @@ export default function SpeechTimelineSidebar({
           <audio ref={audioRef} className="hidden" onEnded={() => setPlayingId(null)} />
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700 font-medium">Source: {sourceLabel}</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-gray-700 font-medium">{sourceLabel} <InfoTip text="How the timings were produced." label="Timing source" /></span>
             <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">{segments.length} segments</span>
             {totalDuration > 0 && <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">{totalDuration.toFixed(2)}s</span>}
           </div>
@@ -277,15 +278,17 @@ export default function SpeechTimelineSidebar({
 
           {showScript && (
             <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-gray-600">Script text (what the speech says)</label>
+              <div className="flex items-center gap-1.5">
+                <label className="block text-[11px] font-medium text-gray-600">Script text</label>
+                <InfoTip text="The words that were spoken. Paste or edit the script if missing or different. Auto-filled for new speech; otherwise paste it to build an aligned/estimated timeline." label="Script text" />
+              </div>
               <textarea
                 value={scriptText}
                 onChange={(e) => setScriptText(e.target.value)}
                 rows={4}
-                placeholder="Paste or edit the spoken script here if missing or different..."
+                placeholder="Paste the script…"
                 className="w-full rounded-md border border-gray-300 p-2 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-300"
               />
-              <p className="text-[11px] text-gray-500">Auto-filled for newly generated speech. If unavailable, paste the script to generate an aligned/estimated timeline.</p>
             </div>
           )}
 
@@ -293,7 +296,7 @@ export default function SpeechTimelineSidebar({
           {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md p-2">{error}</p>}
           {!audioUrl && <p className="text-xs text-gray-500">Create or select speech to build a timeline.</p>}
           {audioUrl && !(scriptText || sourceText || "").trim() && (
-            <p className="text-xs text-gray-500">This item doesn&apos;t have saved script text. Paste what the speech says above to generate a timeline, or generate a new speech (script auto-fills for new results).</p>
+            <p className="flex items-center gap-1.5 text-xs text-gray-500">Add script text to build a timeline. <InfoTip text="New speech results auto-fill the script." label="Script needed" /></p>
           )}
 
           {segments.length > 0 ? (
@@ -328,8 +331,8 @@ export default function SpeechTimelineSidebar({
               ))}
             </div>
           ) : (
-            <div className="text-xs text-gray-500 border border-dashed rounded-lg p-3">
-              No timeline yet. Generate speech (ElevenLabs can include timestamps) or click <span className="font-medium">Generate timeline</span> for a best-effort fallback from audio duration and script.
+            <div className="flex items-center gap-1.5 text-xs text-gray-500 border border-dashed rounded-lg p-3">
+              No timeline yet. <InfoTip text="Generate speech with timestamps (ElevenLabs can include them), or use the best-effort fallback from audio duration and script." label="No timeline" />
             </div>
           )}
         </div>

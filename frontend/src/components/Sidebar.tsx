@@ -3,16 +3,17 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import InfoTip from "@/components/InfoTip";
 
 const NAV = [
   { href: "/", label: "Home", icon: "🏠", desc: "Start here" },
-  { href: "/text-to-speech", label: "Create Speech", icon: "🎙️", desc: "Turn text into audio" },
-  { href: "/speech-and-background", label: "Add Music & Sounds", icon: "🎵", desc: "Mix voice with background" },
+  { href: "/text-to-speech", label: "Speech", icon: "🎙️", desc: "Turn text into audio" },
+  { href: "/speech-and-background", label: "Mix Audio", icon: "🎵", desc: "Mix voice with background" },
   { href: "/trimming-and-zooming", label: "Edit Video", icon: "✂️", desc: "Trim and zoom clips" },
-  { href: "/animated-captions", label: "Add Captions", icon: "💬", desc: "Put words on your video" },
-  { href: "/publish-package", label: "Ready to Post", icon: "📦", desc: "Thumbnail and short clips" },
-  { href: "/history", label: "My Files", icon: "🗂️", desc: "Find saved results" },
-  { href: "/instruction-manual", label: "Help Guide", icon: "📖", desc: "How to use each tool" },
+  { href: "/animated-captions", label: "Captions", icon: "💬", desc: "Put words on your video" },
+  { href: "/publish-package", label: "Publish", icon: "📦", desc: "Thumbnail and short clips" },
+  { href: "/history", label: "Files", icon: "🗂️", desc: "Find saved results" },
+  { href: "/instruction-manual", label: "Help", icon: "📖", desc: "How to use each tool" },
 ];
 
 export default function Sidebar() {
@@ -34,7 +35,6 @@ export default function Sidebar() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white text-sm font-bold shrink-0" aria-hidden="true">Y</div>
           <div className="min-w-0">
             <div className="text-sm font-semibold text-gray-900 leading-tight">Yakodonyo Studio</div>
-            <div className="text-[11px] text-gray-500 leading-tight">Create speech and videos step by step</div>
           </div>
         </div>
         <button
@@ -67,12 +67,11 @@ export default function Sidebar() {
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white text-base font-bold shadow-sm shrink-0" aria-hidden="true">Y</div>
               <div className="min-w-0">
                 <div className="text-lg font-bold text-gray-900 leading-tight">Yakodonyo Studio</div>
-                <div className="mt-0.5 text-sm text-gray-600 leading-tight">Create speech and videos step by step</div>
               </div>
             </Link>
           </div>
 
-          <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-autohide">
+          <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-hide">
             {NAV.map((item) => {
               const active = isActive(item.href);
               return (
@@ -87,18 +86,18 @@ export default function Sidebar() {
                   }`}
                 >
                   <span className="mt-0.5 text-lg leading-none">{item.icon}</span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold leading-tight">{item.label}</span>
-                    <span className={`block text-xs mt-0.5 ${active ? "text-blue-700/80" : "text-gray-500"}`}>{item.desc}</span>
+                  <span className="flex min-w-0 flex-1 items-center justify-between gap-1">
+                    <span className="block truncate text-sm font-semibold leading-tight">{item.label}</span>
+                    <InfoTip text={item.desc} label={item.label} placement="right" focusable={false} />
                   </span>
                 </Link>
               );
             })}
           </nav>
 
-          <div className="border-t p-4 text-xs text-gray-500 space-y-1">
-            <p className="font-medium text-gray-700">Tip</p>
-            <p>Start with <span className="font-medium">Create Speech</span>, then add music, edit video, and captions.</p>
+          <div className="flex items-center gap-1.5 border-t p-4 text-xs text-gray-500">
+            <span className="font-medium text-gray-700">Tip</span>
+            <InfoTip text="Start with Speech, then add music, edit video, and captions." label="Workflow tip" placement="top" />
           </div>
         </div>
       </aside>

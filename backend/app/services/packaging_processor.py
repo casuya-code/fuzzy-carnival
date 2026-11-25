@@ -20,6 +20,7 @@ from app.config import (
     SOCIAL_VIDEO_CRF,
     SOCIAL_VIDEO_PRESET,
 )
+from app.services.text_styles import hex_rgb, normalize_lower_third, normalize_text_style
 
 ACCENTS = {
     "yellow": (255, 215, 0),
@@ -34,11 +35,43 @@ FONT_CANDIDATES = [
     r"C:\Windows\Fonts\arialbd.ttf",
     r"C:\Windows\Fonts\segoeuib.ttf",
 ]
+REGULAR_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    r"C:\Windows\Fonts\arial.ttf",
+    r"C:\Windows\Fonts\segoeui.ttf",
+]
 
 
-def resolve_font(size: int, preferred: str | None = None) -> ImageFont.FreeTypeFont:
-    """Find a bold font on Linux (Railway) or Windows (local dev)."""
-    for path in ([preferred] if preferred else []) + FONT_CANDIDATES:
+def _font_candidates(family: str, bold: bool) -> list[str]:
+    """Map a shared style font family to locally available font files."""
+    if "Mono" in family:
+        name = "DejaVuSansMono-Bold.ttf" if bold else "DejaVuSansMono.ttf"
+        return [
+            f"/usr/share/fonts/truetype/dejavu/{name}",
+            r"C:\Windows\Fonts\consolab.ttf" if bold else r"C:\Windows\Fonts\consola.ttf",
+        ]
+    if "Serif" in family:
+        name = "DejaVuSerif-Bold.ttf" if bold else "DejaVuSerif.ttf"
+        return [
+            f"/usr/share/fonts/truetype/dejavu/{name}",
+            r"C:\Windows\Fonts\timesbd.ttf" if bold else r"C:\Windows\Fonts\times.ttf",
+        ]
+    return FONT_CANDIDATES if bold else REGULAR_CANDIDATES
+
+
+def resolve_font(
+    size: int,
+    preferred: str | None = None,
+    style: dict | None = None,
+    bold: bool | None = None,
+) -> ImageFont.FreeTypeFont:
+    """Find a matching font on Linux (Railway) or Windows (local dev)."""
+    use_bold = bold if bold is not None else (bool(style.get("bold")) if style else True)
+    family = str(style.get("font_family", "")) if style else ""
+    candidates = ([preferred] if preferred else []) + _font_candidates(family, use_bold)
+    for path in candidates + FONT_CANDIDATES + REGULAR_CANDIDATES:
         if path and os.path.exists(path):
             try:
                 return ImageFont.truetype(path, size)
@@ -105,15 +138,37 @@ def extract_best_frame(
     return out_path
 
 
-def _fit_font(draw, word: str, base_size: int, max_w: int, font_path: str | None):
+def _fit_font(
+    draw,
+    word: str,
+    base_size: int,
+    max_w: int,
+    font_path: str | None,
+    style: dict | None = None,
+):
     size = base_size
-    font = resolve_font(size, font_path)
+    font = resolve_font(size, font_path, style)
     bbox = draw.textbbox((0, 0), word, font=font)
     while (bbox[2] - bbox[0]) > max_w and size > 18:
         size -= 4
-        font = resolve_font(size, font_path)
+        font = resolve_font(size, font_path, style)
         bbox = draw.textbbox((0, 0), word, font=font)
     return font, bbox
+
+
+def _draw_text(draw, xy, text, font, fill, stroke_width=0, stroke_fill=None) -> None:
+    """Pillow versions before stroke support simply ignore the outline."""
+    try:
+        draw.text(
+            xy, text, font=font, fill=fill,
+            stroke_width=int(stroke_width), stroke_fill=stroke_fill,
+        )
+    except TypeError:
+        draw.text(xy, text, font=font, fill=fill)
+
+
+FRAMES = ("none", "solid", "double", "film")
+SHAPES = ("none", "circle", "rect")
 
 
 def generate_viral_thumbnail(
@@ -126,6 +181,9 @@ def generate_viral_thumbnail(
     border: bool = True,
     width: int = 1280,
     height: int = 720,
+    text_style: dict | None = None,
+    frame: str | None = None,
+    shape: str | None = None,
 ) -> str:
     """Design a 1280x720 thumbnail: sharp frame + contrast boost + gradient + 3-word hook."""
     raw = str(Path(output_thumb_path).with_name("raw_best_frame.jpg"))
@@ -151,15 +209,51 @@ def generate_viral_thumbnail(
 
     draw = ImageDraw.Draw(img)
     accent_rgb = ACCENTS.get(accent, ACCENTS["yellow"])
+    style = normalize_text_style(text_style) if text_style is not None else None
+    styled = style is not None and style["preset"] != "default"
     words = hook_words.upper().split()[:3]
     x = int(width * 0.0586)          # ~75px at 720p
     y = int(height * 0.208)          # ~150px at 720p
-    base_size = int(height * 0.146)  # ~105px at 720p
+    scale = style["font_scale"] / 100.0 if styled else 1.0
+    base_size = int(height * 0.146 * scale)  # ~105px at 720p
+
+    # Simple shape behind text area (Plan 8)
+    shape_kind = (shape or "none").lower().strip()
+    if shape_kind not in SHAPES:
+        shape_kind = "none"
+    if shape_kind == "rect":
+        bar_w = int(width * 0.018)
+        draw.rectangle([int(width * 0.03), int(height * 0.16), int(width * 0.03) + bar_w, int(height * 0.78)], fill=accent_rgb + (220,))
+    elif shape_kind == "circle":
+        r = int(height * 0.09)
+        cx, cy = width - int(width * 0.1), int(height * 0.14)
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=accent_rgb + (210,), outline=(255, 255, 255, 220), width=4)
 
     for idx, word in enumerate(words):
-        font, bbox = _fit_font(draw, word, base_size, width - 2 * x, font_path)
+        font, bbox = _fit_font(draw, word, base_size, width - 2 * x, font_path, style if styled else None)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        if idx == len(words) - 1:
+        if styled:
+            outline_rgb = hex_rgb(style["outline_color"])
+            stroke = int(style["outline_width"]) // 2
+            alpha = int(round(255 * (1 - style["background_opacity"] / 100.0)))
+            if style["background_opacity"] > 0:
+                draw.rounded_rectangle(
+                    [x - 16, y - 8, x + tw + 16, y + th + 10],
+                    radius=12, fill=hex_rgb(style["background_color"]) + (alpha,),
+                )
+            if idx == len(words) - 1:
+                pad_x, pad_y = 22, 14
+                draw.rounded_rectangle(
+                    [x - pad_x, y - pad_y, x + tw + pad_x, y + th + pad_y + 10],
+                    radius=18, fill=accent_rgb + (255,),
+                )
+                _draw_text(draw, (x, y), word, font, (15, 15, 15, 255), stroke, outline_rgb + (255,))
+            else:
+                _draw_text(
+                    draw, (x, y), word, font, hex_rgb(style["base_color"]) + (255,),
+                    stroke, outline_rgb + (255,),
+                )
+        elif idx == len(words) - 1:
             pad_x, pad_y = 22, 14
             draw.rounded_rectangle(
                 [x - pad_x, y - pad_y, x + tw + pad_x, y + th + pad_y + 10],
@@ -172,8 +266,21 @@ def generate_viral_thumbnail(
             draw.text((x, y), word, font=font, fill=(255, 255, 255, 255))
         y += th + int(height * 0.0625)
 
-    if border:
+    frame_kind = (frame or ("solid" if border else "none")).lower().strip()
+    if frame_kind not in FRAMES:
+        frame_kind = "solid" if border else "none"
+    if frame_kind == "solid":
         draw.rectangle([0, 0, width - 1, height - 1], outline=accent_rgb + (255,), width=8)
+    elif frame_kind == "double":
+        draw.rectangle([0, 0, width - 1, height - 1], outline=accent_rgb + (255,), width=8)
+        inset = 18
+        draw.rectangle([inset, inset, width - 1 - inset, height - 1 - inset], outline=(255, 255, 255, 210), width=3)
+    elif frame_kind == "film":
+        draw.rectangle([0, 0, width - 1, height - 1], outline=(20, 20, 20, 255), width=14)
+        hole_w, hole_h, gap, margin = 18, 12, 28, 18
+        for hx in range(margin, width - margin, gap):
+            draw.rounded_rectangle([hx, 6, hx + hole_w, 6 + hole_h], radius=3, fill=(230, 230, 230, 230))
+            draw.rounded_rectangle([hx, height - 6 - hole_h, hx + hole_w, height - 6], radius=3, fill=(230, 230, 230, 230))
 
     Path(output_thumb_path).parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(output_thumb_path, "JPEG", quality=90, optimize=True)
@@ -197,16 +304,56 @@ def _has_audio(path: str) -> bool:
         return False
 
 
-def _make_banner(path: str, label: str, title: str, accent: str, font_path: str | None) -> None:
+def _make_banner(
+    path: str,
+    label: str,
+    title: str,
+    accent: str,
+    font_path: str | None,
+    style: dict | None = None,
+    lower_third: dict | None = None,
+) -> None:
+    """Draw the Shorts hook banner with the shared style and optional labels."""
     w, h = 1080, 180
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([0, 0, w, h], radius=24, fill=(8, 8, 12, 205))
-    f1, _ = _fit_font(d, label, 66, w - 72, font_path)
-    d.text((36, 20), label, font=f1, fill=(255, 255, 255, 255))
-    if title:
-        f2, _ = _fit_font(d, title.upper(), 34, w - 72, font_path)
-        d.text((38, 108), title.upper(), font=f2, fill=ACCENTS.get(accent, ACCENTS["yellow"]) + (255,))
+    styled = style is not None and style["preset"] != "default"
+    accent_rgb = ACCENTS.get(accent, ACCENTS["yellow"])
+    if styled and style["background_opacity"] > 0:
+        alpha = int(round(255 * (1 - style["background_opacity"] / 100.0)))
+        bg = hex_rgb(style["background_color"]) + (alpha,)
+    else:
+        bg = (8, 8, 12, 205)
+    d.rounded_rectangle([0, 0, w, h], radius=24, fill=bg)
+
+    render_style = style if styled else None
+    scale = style["font_scale"] / 100.0 if styled else 1.0
+    stroke = style["outline_width"] // 2 if styled else 0
+    outline = hex_rgb(style["outline_color"]) + (255,) if styled else None
+    base_rgb = hex_rgb(style["base_color"]) if styled else (255, 255, 255)
+    active_rgb = hex_rgb(style["highlight_color"]) if styled else accent_rgb
+
+    lower = normalize_lower_third(lower_third)
+    labels = [lower[key] for key in ("speaker", "location", "topic") if lower[key]]
+    label_size = int(66 * scale)
+    sub_size = int(34 * scale)
+    if labels:
+        label_size = min(label_size, 46)
+        sub_size = min(sub_size, 30)
+
+    f1, _ = _fit_font(d, label, label_size, w - 72, font_path, render_style)
+    _draw_text(d, (36, 12 if labels else 20), label, f1, base_rgb + (255,), stroke, outline)
+
+    if labels:
+        text = "  •  ".join(labels)
+        f2, _ = _fit_font(d, text, sub_size, w - 72, font_path, render_style)
+        _draw_text(d, (38, 88), text, f2, active_rgb + (255,), stroke, outline)
+        if title:
+            f3, _ = _fit_font(d, title.upper(), int(24 * scale), w - 72, font_path, render_style)
+            _draw_text(d, (38, 136), title.upper(), f3, base_rgb + (255,), stroke, outline)
+    elif title:
+        f2, _ = _fit_font(d, title.upper(), sub_size, w - 72, font_path, render_style)
+        _draw_text(d, (38, 108), title.upper(), f2, accent_rgb + (255,), stroke, outline)
     img.save(path)
 
 
@@ -220,6 +367,8 @@ def export_three_vertical_shorts(
     accent: str = "yellow",
     font_path: str | None = None,
     banner_sec: float = 5.0,
+    text_style: dict | None = None,
+    lower_third: dict | None = None,
 ) -> list[str]:
     """Slice a 16:9 master into 3 center-cropped 9:16 Shorts with a top hook banner."""
     out_dir = Path(output_dir)
@@ -227,6 +376,8 @@ def export_three_vertical_shorts(
     starts = start_times or [0, 45, 90]
     phases = phases or ["THE HOOK", "THE CLIMAX", "THE REVEAL"]
     audio = _has_audio(master_16_9_video)
+    style = normalize_text_style(text_style) if text_style is not None else None
+    lower = normalize_lower_third(lower_third)
     short_paths: list[str] = []
 
     vf = "crop=ih*9/16:ih,scale=1080:1920,setsar=1"
@@ -234,7 +385,7 @@ def export_three_vertical_shorts(
         phase = phases[idx - 1] if idx - 1 < len(phases) else f"PART {idx}"
         label = f"PART {idx}: {phase}"
         banner = str(out_dir / f"banner_{idx}.png")
-        _make_banner(banner, label, title, accent, font_path)
+        _make_banner(banner, label, title, accent, font_path, style, lower)
         out_path = str(out_dir / f"short_part_{idx}_9x16.mp4")
 
         filter_complex = (

@@ -1,3 +1,5 @@
+import type { LowerThird, TextStyle } from "@/lib/textStyles";
+
 /** Single source of truth for the backend origin (used by every client). */
 export const API_BASE = (
   process.env.NEXT_PUBLIC_RAILWAY_API_URL || "http://127.0.0.1:8000"
@@ -216,8 +218,8 @@ export interface CaptionPreview {
   chunk_count: number;
   word_timings: { word: string; start: number; end: number; duration: number; weight: number }[];
   sample_lines: string[];
-  style: {
-    aspect_ratio: string;
+  style: TextStyle & {
+    aspect_ratio?: string;
     play_res: number[];
     font_size: number;
     margin_l: number;
@@ -225,8 +227,11 @@ export interface CaptionPreview {
     margin_v: number;
     highlight: string;
     base: string;
+    outline_color?: string;
     outline: number;
   };
+  lower_third?: LowerThird;
+  lower_third_duration_sec?: number;
   intro_delay_sec: number;
   voice_duration: number;
 }
@@ -237,6 +242,9 @@ export async function previewCaptions(payload: {
   intro_delay_sec: number;
   aspect_ratio: string;
   words_per_chunk: number;
+  caption_style?: TextStyle;
+  lower_third?: LowerThird;
+  lower_third_duration_sec?: number;
 }): Promise<CaptionPreview> {
   const res = await fetch(`${API_BASE}/api/v1/captions/preview`, {
     method: "POST",
@@ -263,6 +271,10 @@ export async function burnCaptions(payload: {
   language?: string;
   upscale_2k?: boolean;
   loudnorm?: boolean;
+  caption_style?: TextStyle;
+  lower_third?: LowerThird;
+  lower_third_duration_sec?: number;
+  font_path?: string | null;
 }): Promise<{
   video_r2_key?: string;
   video_url: string;
@@ -288,6 +300,10 @@ export async function burnCaptions(payload: {
   if (payload.language) fd.append("language", payload.language);
   if (payload.upscale_2k != null) fd.append("upscale_2k", String(payload.upscale_2k));
   if (payload.loudnorm != null) fd.append("loudnorm", String(payload.loudnorm));
+  if (payload.caption_style) fd.append("caption_style", JSON.stringify(payload.caption_style));
+  if (payload.lower_third) fd.append("lower_third", JSON.stringify(payload.lower_third));
+  if (payload.lower_third_duration_sec != null) fd.append("lower_third_duration_sec", String(payload.lower_third_duration_sec));
+  if (payload.font_path) fd.append("font_path", payload.font_path);
   const res = await fetch(`${API_BASE}/api/v1/captions/burn`, { method: "POST", body: fd });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
@@ -303,6 +319,13 @@ export interface VideoProcessResult {
   clips_processed?: number;
   word_count?: number;
   chunk_count?: number;
+  transition_sfx?: string;
+  transition_sfx_level?: number;
+  overlay?: string;
+  overlay_image?: boolean;
+  overlay_position?: string;
+  overlay_size?: number;
+  overlay_opacity?: number;
 }
 
 export interface VideoBatchResult {
@@ -325,6 +348,10 @@ export async function processVideoBatch(payload: {
   audio?: File | null;
   audio_r2_key?: string | null;
   bpm?: number | null;
+  transition?: string;
+  transition_duration_sec?: number;
+  transitions?: string[];
+  overlay?: string;
 }): Promise<VideoBatchResult> {
   const fd = new FormData();
   payload.clips.forEach((c) => fd.append("clips", c, c.name));
@@ -335,6 +362,10 @@ export async function processVideoBatch(payload: {
   if (payload.audio) fd.append("audio", payload.audio, payload.audio.name);
   if (payload.audio_r2_key) fd.append("audio_r2_key", payload.audio_r2_key);
   if (payload.bpm != null) fd.append("bpm", String(payload.bpm));
+  if (payload.transition) fd.append("transition", payload.transition);
+  if (payload.transition_duration_sec != null) fd.append("transition_duration_sec", String(payload.transition_duration_sec));
+  if (payload.transitions) fd.append("transitions", JSON.stringify(payload.transitions));
+  if (payload.overlay) fd.append("overlay", payload.overlay);
   const res = await fetch(`${API_BASE}/api/v1/video/process-batch`, {
     method: "POST",
     body: fd,
@@ -359,6 +390,20 @@ export async function finalizeVideo(payload: {
   words_per_chunk?: number;
   upscale_2k?: boolean;
   loudnorm?: boolean;
+  transition?: string;
+  transition_duration_sec?: number;
+  transitions?: string[];
+  transition_sfx?: string;
+  transition_sfx_level?: number;
+  overlay_image?: File | null;
+  overlay_position?: string;
+  overlay_size?: number;
+  overlay_opacity?: number;
+  overlay?: string;
+  caption_style?: TextStyle;
+  lower_third?: LowerThird;
+  lower_third_duration_sec?: number;
+  font_path?: string | null;
 }): Promise<VideoProcessResult> {
   const fd = new FormData();
   fd.append("video_r2_keys", JSON.stringify(payload.video_r2_keys));
@@ -375,6 +420,20 @@ export async function finalizeVideo(payload: {
   }
   if (payload.upscale_2k != null) fd.append("upscale_2k", String(payload.upscale_2k));
   if (payload.loudnorm != null) fd.append("loudnorm", String(payload.loudnorm));
+  if (payload.transition) fd.append("transition", payload.transition);
+  if (payload.transition_duration_sec != null) fd.append("transition_duration_sec", String(payload.transition_duration_sec));
+  if (payload.transitions) fd.append("transitions", JSON.stringify(payload.transitions));
+  if (payload.transition_sfx) fd.append("transition_sfx", payload.transition_sfx);
+  if (payload.transition_sfx_level != null) fd.append("transition_sfx_level", String(payload.transition_sfx_level));
+  if (payload.overlay_image) fd.append("overlay_image", payload.overlay_image, payload.overlay_image.name);
+  if (payload.overlay_position) fd.append("overlay_position", payload.overlay_position);
+  if (payload.overlay_size != null) fd.append("overlay_size", String(payload.overlay_size));
+  if (payload.overlay_opacity != null) fd.append("overlay_opacity", String(payload.overlay_opacity));
+  if (payload.overlay) fd.append("overlay", payload.overlay);
+  if (payload.caption_style) fd.append("caption_style", JSON.stringify(payload.caption_style));
+  if (payload.lower_third) fd.append("lower_third", JSON.stringify(payload.lower_third));
+  if (payload.lower_third_duration_sec != null) fd.append("lower_third_duration_sec", String(payload.lower_third_duration_sec));
+  if (payload.font_path) fd.append("font_path", payload.font_path);
   const res = await fetch(`${API_BASE}/api/v1/video/finalize`, {
     method: "POST",
     body: fd,
@@ -400,6 +459,20 @@ export async function processVideo(payload: {
   words_per_chunk?: number;
   upscale_2k?: boolean;
   loudnorm?: boolean;
+  transition?: string;
+  transition_duration_sec?: number;
+  transitions?: string[];
+  transition_sfx?: string;
+  transition_sfx_level?: number;
+  overlay_image?: File | null;
+  overlay_position?: string;
+  overlay_size?: number;
+  overlay_opacity?: number;
+  overlay?: string;
+  caption_style?: TextStyle;
+  lower_third?: LowerThird;
+  lower_third_duration_sec?: number;
+  font_path?: string | null;
 }): Promise<VideoProcessResult> {
   const fd = new FormData();
   payload.clips.forEach((c) => fd.append("clips", c, c.name));
@@ -423,6 +496,20 @@ export async function processVideo(payload: {
   }
   if (payload.upscale_2k != null) fd.append("upscale_2k", String(payload.upscale_2k));
   if (payload.loudnorm != null) fd.append("loudnorm", String(payload.loudnorm));
+  if (payload.transition) fd.append("transition", payload.transition);
+  if (payload.transition_duration_sec != null) fd.append("transition_duration_sec", String(payload.transition_duration_sec));
+  if (payload.transitions) fd.append("transitions", JSON.stringify(payload.transitions));
+  if (payload.transition_sfx) fd.append("transition_sfx", payload.transition_sfx);
+  if (payload.transition_sfx_level != null) fd.append("transition_sfx_level", String(payload.transition_sfx_level));
+  if (payload.overlay_image) fd.append("overlay_image", payload.overlay_image, payload.overlay_image.name);
+  if (payload.overlay_position) fd.append("overlay_position", payload.overlay_position);
+  if (payload.overlay_size != null) fd.append("overlay_size", String(payload.overlay_size));
+  if (payload.overlay_opacity != null) fd.append("overlay_opacity", String(payload.overlay_opacity));
+  if (payload.overlay) fd.append("overlay", payload.overlay);
+  if (payload.caption_style) fd.append("caption_style", JSON.stringify(payload.caption_style));
+  if (payload.lower_third) fd.append("lower_third", JSON.stringify(payload.lower_third));
+  if (payload.lower_third_duration_sec != null) fd.append("lower_third_duration_sec", String(payload.lower_third_duration_sec));
+  if (payload.font_path) fd.append("font_path", payload.font_path);
   const res = await fetch(`${API_BASE}/api/v1/video/process`, {
     method: "POST",
     body: fd,
@@ -459,8 +546,12 @@ export async function previewThumbnail(payload: {
   accent: string;
   gradient: string;
   border: boolean;
+  frame?: string;
+  shape?: string;
   topic?: string;
   language?: string;
+  text_style?: TextStyle;
+  font_path?: string | null;
 }): Promise<{ thumbnail_url: string; thumbnail_r2_key: string; width: number; height: number; hook_words: string[] }> {
   const fd = new FormData();
   if (payload.master_video) fd.append("master_video", payload.master_video, payload.master_video.name);
@@ -469,8 +560,12 @@ export async function previewThumbnail(payload: {
   fd.append("accent", payload.accent);
   fd.append("gradient", payload.gradient);
   fd.append("border", String(payload.border));
+  if (payload.frame) fd.append("frame", payload.frame);
+  if (payload.shape) fd.append("shape", payload.shape);
   if (payload.topic) fd.append("topic", payload.topic);
   if (payload.language) fd.append("language", payload.language);
+  if (payload.text_style) fd.append("text_style", JSON.stringify(payload.text_style));
+  if (payload.font_path) fd.append("font_path", payload.font_path);
   const res = await fetch(`${API_BASE}/api/v1/packaging/thumbnail`, { method: "POST", body: fd });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
@@ -486,6 +581,8 @@ export async function publishPackage(payload: {
   accent: string;
   gradient: string;
   border: boolean;
+  frame?: string;
+  shape?: string;
   shorts_title: string;
   clip_length_sec: number;
   start_times: number[];
@@ -494,6 +591,9 @@ export async function publishPackage(payload: {
   language?: string;
   upscale_2k?: boolean;
   loudnorm?: boolean;
+  text_style?: TextStyle;
+  lower_third?: LowerThird;
+  font_path?: string | null;
 }): Promise<PackageResult> {
   const fd = new FormData();
   if (payload.master_video) fd.append("master_video", payload.master_video, payload.master_video.name);
@@ -502,6 +602,8 @@ export async function publishPackage(payload: {
   fd.append("accent", payload.accent);
   fd.append("gradient", payload.gradient);
   fd.append("border", String(payload.border));
+  if (payload.frame) fd.append("frame", payload.frame);
+  if (payload.shape) fd.append("shape", payload.shape);
   fd.append("shorts_title", payload.shorts_title);
   fd.append("clip_length_sec", String(payload.clip_length_sec));
   fd.append("start_times", payload.start_times.join(","));
@@ -510,6 +612,9 @@ export async function publishPackage(payload: {
   if (payload.language) fd.append("language", payload.language);
   if (payload.upscale_2k != null) fd.append("upscale_2k", String(payload.upscale_2k));
   if (payload.loudnorm != null) fd.append("loudnorm", String(payload.loudnorm));
+  if (payload.text_style) fd.append("text_style", JSON.stringify(payload.text_style));
+  if (payload.lower_third) fd.append("lower_third", JSON.stringify(payload.lower_third));
+  if (payload.font_path) fd.append("font_path", payload.font_path);
   const res = await fetch(`${API_BASE}/api/v1/packaging/publish`, { method: "POST", body: fd });
   if (!res.ok) {
     const detail = extractDetail(await res.text());
@@ -552,6 +657,47 @@ export async function analyzeAudio(key: string): Promise<ReferenceAnalysis> {
   if (!res.ok) {
     const detail = extractDetail(await res.text());
     throw new Error(detail || `Analyze failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export interface SfxResult {
+  kind: string;
+  audio_r2_key: string;
+  audio_url: string;
+  duration_seconds?: number;
+}
+
+export async function generateSfx(payload: {
+  kind: string;
+  duration_sec?: number;
+  output_format?: "mp3" | "wav";
+}): Promise<SfxResult> {
+  const res = await fetch(`${API_BASE}/api/v1/audio/sfx`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const detail = extractDetail(await res.text());
+    throw new Error(detail || `SFX generation failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export interface BrandFontResult {
+  font_path: string;
+  font_name: string;
+  font_style: string;
+}
+
+export async function uploadBrandFont(file: File): Promise<BrandFontResult> {
+  const fd = new FormData();
+  fd.append("font", file, file.name);
+  const res = await fetch(`${API_BASE}/api/v1/fonts/upload`, { method: "POST", body: fd });
+  if (!res.ok) {
+    const detail = extractDetail(await res.text());
+    throw new Error(detail || `Font upload failed (${res.status})`);
   }
   return res.json();
 }

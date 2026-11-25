@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import InfoTip from "@/components/InfoTip";
 
 const SECTIONS = [
   { id: "overview", title: "Overview" },
@@ -38,14 +39,21 @@ export default function InstructionManualPage() {
       <header className="rounded-xl border bg-white p-4 sm:p-6 shadow-sm">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">📖 Help Guide</h1>
         <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-3xl">
-          Simple instructions for each tool. Use the menu on the left to open a tool, or jump to a section below.
+          Instructions for each tool.{" "}
+          <InfoTip
+            text="Use the menu on the left to open a tool, or jump to a section below."
+            label="Navigation help"
+          />
         </p>
         <div className="mt-4 max-w-md">
-          <label className="mb-1 block text-xs font-medium text-gray-500">Filter jump list</label>
+          <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500">
+            Find a topic
+            <InfoTip text="Type part of a tool name to filter the list." label="Find a topic help" />
+          </label>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter jump list..."
+            placeholder="Find a topic…"
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
           />
         </div>
@@ -70,25 +78,28 @@ export default function InstructionManualPage() {
         <div className="space-y-4 sm:space-y-5 min-w-0">
           <Section id="overview" title="Overview">
             <p>
-              Yakodonyo Studio helps you create spoken audio and videos in a few easy steps. You can turn text into speech,
-              mix in music or sounds, edit video clips, add captions, and prepare files for posting.
+              Speech and video in a few steps.{" "}
+              <InfoTip
+                text="Create speech, mix sounds, edit video, add captions, then prepare files."
+                label="Overview details"
+              />
             </p>
             <ul className="space-y-1.5">
               <Li><b>Create Speech</b> — type text and get spoken audio in English or Swahili.</Li>
               <Li><b>Add Music & Sounds</b> — mix your voice with background music or ambient sound.</Li>
               <Li><b>Edit Video</b> — trim clips, add gentle zoom, and attach your audio.</Li>
-              <Li><b>Add Captions</b> — burn words from your narration script onto your video so people can follow along (it does not transcribe audio).</Li>
+              <Li><b>Add Captions — on-screen words</b> <InfoTip text="Words come from your script; audio is not transcribed." label="Add Captions details" /></Li>
               <Li><b>Ready to Post</b> — make a thumbnail and short clips from your final video.</Li>
-              <Li><b>My Files</b> — find your recent video deliverables (edited videos, captions, thumbnails, and packages) in one place.</Li>
+              <Li><b>My Files — saved videos</b> <InfoTip text="Edited, captioned, thumbnails and packages." label="My Files details" /></Li>
             </ul>
           </Section>
 
           <Section id="getting-started" title="Getting started">
             <ul className="space-y-1.5">
-              <Li>Use the <b>menu on the left</b> to move between tools. On phones, tap <b>Menu</b>.</Li>
+              <Li>Use the <b>left menu</b> (<b>Menu</b> on phones).</Li>
               <Li>A common order is: <b>Create Speech → Add Music & Sounds → Edit Video → Add Captions → Ready to Post</b>.</Li>
-              <Li>Your video results are saved in <b>My Files</b> so you can reuse or download them later (on this device/browser). Generated speech and mixes are kept separately for reuse in the audio tools.</Li>
-              <Li>If the app says it is waking up, wait a little for the first action to finish.</Li>
+              <Li><b>Saved on this device.</b> <InfoTip text="Videos appear in My Files; speech and mixes stay in audio tools." label="Where files are saved" /></Li>
+              <Li><b>Waking up</b> <InfoTip text="The first action may be slow while the service starts." label="Waking up details" /></Li>
             </ul>
           </Section>
 
@@ -96,24 +107,24 @@ export default function InstructionManualPage() {
             <p>Turn written text into natural-sounding audio.</p>
             <ul className="space-y-1.5">
               <Li><b>Choose a language:</b> English or Swahili.</Li>
-              <Li><b>Add a voice sample (optional):</b> record or upload 10–15 seconds of clear speech if you want a voice that sounds like that sample (available for some voice options).</Li>
-              <Li><b>Choose a voice:</b> pick the voice that fits your project. Some voices use your sample, others use a preset/online voice.</Li>
-              <Li><b>Project name (optional):</b> a short label used to name your saved audio files so they are easy to find later.</Li>
-              <Li><b>Speaking pace:</b> drag the slider to change delivery speed. <b>Slower</b> reads more deliberately with longer gaps (good for narration and storytelling), <b>Natural</b> is the default, <b>Faster</b> compresses the delivery. Use this instead of rewriting your text to change the speed.</Li>
+              <Li><b>Voice sample (optional): 10–15s of clear speech.</b> <InfoTip text="Supported voices can clone that sample." label="Voice sample details" /></Li>
+              <Li><b>Choose a voice: clone or preset.</b> <InfoTip text="Some voices use your sample; others use a preset or online voice." label="Voice options" /></Li>
+              <Li><b>Project name: file label.</b> <InfoTip text="Used to name saved files for easier lookup." label="Project name details" /></Li>
+              <Li><b>Speaking pace: Slower / Natural / Faster.</b> <InfoTip text="Slower adds pauses for narration; Faster compresses delivery." label="Speaking pace details" /></Li>
               <Li><b>Enter your text:</b> type or paste what you want to hear, then click <b>Create speech</b>.</Li>
-              <Li><b>Tip — punctuation controls the breathing:</b> the reader pauses after every sentence, takes a short catch after commas, and leaves a longer beat between paragraphs. For the most natural sound, end sentences with <b>.</b> <b>?</b> or <b>!</b>, keep sentences under about 15 words, and use commas where you would naturally breathe.</Li>
-              <Li><b>Swahili tip:</b> write numbers out as words where possible (e.g. <i>mbili</i> not <i>2</i>), and always finish each sentence with a period — Swahili text without a full stop is read as one continuous run-on.</Li>
-              <Li><b>Tip:</b> You can preview, download, or create another version. Each new click produces a fresh take.</Li>
+              <Li><b>Tip: punctuation sets the pauses.</b> <InfoTip text="Full stops, commas and paragraph breaks control pacing; keep sentences under ~15 words." label="Punctuation tip" /></Li>
+              <Li><b>Swahili: spell out numbers, end with a period.</b> <InfoTip text="Missing full stops cause run-on reading." label="Swahili tip" /></Li>
+              <Li><b>Tip: every click makes a fresh take.</b> <InfoTip text="Preview or download any take." label="Fresh takes" /></Li>
             </ul>
           </Section>
 
           <Section id="speech-bg" title="Add Music & Sounds">
             <p>Combine your voice with background music or ambient sounds in one audio file.</p>
             <ul className="space-y-1.5">
-              <Li><b>Voice (main):</b> choose a voice recording you made or upload one. The final length usually follows this voice track.</Li>
+              <Li><b>Voice (main): your recording.</b> <InfoTip text="The final length usually follows this track." label="Main voice details" /></Li>
               <Li><b>Background sound (optional):</b> add ambience like nature or crowd sounds.</Li>
-              <Li><b>Music (optional):</b> add music behind your voice. The app can lower the music while someone is speaking so the voice stays clear.</Li>
-              <Li>You can save audio files to your browser library to reuse them later, then click <b>🔀 Mix / Master &amp; Export</b> to create the final audio.</Li>
+              <Li><b>Music: auto-lowered while speaking.</b> <InfoTip text="Background music ducks under speech for clarity." label="Music details" /></Li>
+              <Li><b>Save layers, then Mix &amp; export.</b> <InfoTip text="Saved audio can be reused; mixing produces the final file." label="Mixing details" /></Li>
             </ul>
           </Section>
 
@@ -121,19 +132,21 @@ export default function InstructionManualPage() {
             <p>Prepare your video clips and attach your audio.</p>
             <ul className="space-y-1.5">
               <Li><b>Add clips:</b> upload one or more video clips.</Li>
-              <Li><b>Trim ends:</b> remove a small part from the end of clips if needed (helpful for AI-generated clips).</Li>
-              <Li><b>Choose shape:</b> pick vertical, square, or wide format depending on where you will post.</Li>
+              <Li><b>Trim ends: cut clip tails.</b> <InfoTip text="Especially useful for AI-generated clips." label="Trim ends details" /></Li>
+              <Li><b>Pick platform:</b> Shorts, Feed or YouTube sets the shape.</Li>
+              <Li><b>Transitions &amp; sounds:</b> pick a cut style and optional local SFX. <InfoTip text="Sounds are generated at each cut; no stock audio is downloaded." label="Transition sounds" /></Li>
+              <Li><b>Local overlay:</b> add your own image badge. <InfoTip text="PNG, JPG or WebP. It stays local until render." label="Local overlay" /></Li>
               <Li><b>Add audio:</b> use an uploaded audio file or one from your saved speech/mix results.</Li>
               <Li>When ready, process the video and download or reuse the result in the next steps.</Li>
             </ul>
           </Section>
 
           <Section id="captions" title="Add Captions">
-            <p>Add on-screen words to your video so viewers can read along. Captions are built from the narration script you type — the app does not transcribe audio automatically.</p>
+            <p><b>Captions from your script.</b> <InfoTip text="The app does not transcribe audio automatically." label="Captions details" /></p>
             <ul className="space-y-1.5">
               <Li><b>Choose your video:</b> upload a video or pick one from your saved files.</Li>
-              <Li><b>Enter the matching script:</b> paste the exact words that are spoken (or load the script saved with a speech take). Word timings are estimated from the script and the voice duration; saved speech timelines are not re-sent, so the backend re-estimates them.</Li>
-              <Li><b>Adjust timing:</b> change intro delay, outro pad, voice duration, aspect ratio, and words per chunk. The caption style (font size, colors, outline, and safe-zone position) is set by the preset and cannot be changed here.</Li>
+              <Li><b>Script: paste the exact spoken words.</b> <InfoTip text="Load a saved script; timings are re-estimated from script and duration." label="Script details" /></Li>
+              <Li><b>Adjust timing: delays, ratio, chunk size.</b> <InfoTip text="Font, colors, outline and position are fixed by the preset." label="Timing details" /></Li>
               <Li><b>Preview first:</b> check the timing table, then create the final video with captions burned in.</Li>
             </ul>
           </Section>
@@ -143,36 +156,43 @@ export default function InstructionManualPage() {
             <ul className="space-y-1.5">
               <Li><b>Choose your final video:</b> pick from saved files or upload one.</Li>
               <Li><b>Thumbnail:</b> customize the main text and style, then preview or create it.</Li>
-              <Li><b>Short clips:</b> the app can cut short vertical clips from your main video to help you share highlights.</Li>
+              <Li><b>Short clips: vertical highlights.</b></Li>
               <Li>Download the files you need, or save the package to <b>My Files</b>.</Li>
             </ul>
           </Section>
 
           <Section id="history" title="My Files">
             <p>
-              <b>My Files</b> keeps your recent video deliverables on this device/browser, grouped by type: edited videos, captioned videos, thumbnails, and ready-to-post packages. You can preview, open, download, or remove items from the list. Generated speech and mixes are not shown here; they are kept in the audio tools for reuse.
+              <b>My Files: saved videos on this device.</b>{" "}
+              <InfoTip
+                text="Grouped by type; preview, open, download or remove items. Speech and mixes stay in audio tools."
+                label="My Files details"
+              />
             </p>
-            <p className="text-gray-600">If you clear browser data or use a different device/browser, this list may be empty. Download important files to keep them safe.</p>
+            <p className="text-gray-600">
+              <b>Download files to keep them.</b>{" "}
+              <InfoTip text="The list is device/browser-local and may be cleared." label="Download advice" />
+            </p>
           </Section>
 
           <Section id="troubleshooting" title="Tips & Fixes">
             <ul className="space-y-1.5">
-              <Li><b>App feels slow at first:</b> the service may be waking up. Give it a moment and try again.</Li>
+              <Li><b>Slow at first</b> <InfoTip text="The service may be waking up. Give it a moment and try again." label="Slow start details" /></Li>
               <Li><b>Upload problems:</b> check that the file type is supported and try a smaller file if needed.</Li>
-              <Li><b>Voice copy doesn’t sound right:</b> record 10–15 seconds of clear speech (one person, quiet room) and try again.</Li>
+              <Li><b>Voice copy off</b> <InfoTip text="Record 10–15 seconds of clear speech (one person, quiet room) and try again." label="Voice copy details" /></Li>
               <Li><b>Captions don’t match:</b> make sure the selected audio matches what is spoken in the video.</Li>
-              <Li><b>Missing files in My Files:</b> downloads are the safest way to keep your finished work.</Li>
-              <Li><b>Swahili speech sounds rushed:</b> lower the <b>Speaking pace</b> slider and add a period at the end of every sentence.</Li>
+              <Li><b>Missing files</b> <InfoTip text="Downloads are the safest way to keep your finished work." label="Missing files details" /></Li>
+              <Li><b>Swahili rushed</b> <InfoTip text="Lower the Speaking pace slider and add a period at the end of every sentence." label="Swahili pacing details" /></Li>
             </ul>
           </Section>
 
           <Section id="updates" title="What's New">
             <ul className="space-y-1.5">
-              <Li><b>Speaking pace control</b> — a slider in Create Speech changes delivery speed without rewriting your text (Slower / Natural / Faster).</Li>
-              <Li><b>Smarter pauses</b> — the reader now breathes after sentences, catches briefly at commas, and leaves a longer beat at paragraph breaks, instead of using one flat gap everywhere.</Li>
-              <Li><b>Swahili text clean-up</b> — numbers, dates and times are converted to spoken Swahili automatically, and missing end-of-sentence punctuation is added so long passages no longer run on.</Li>
-              <Li><b>Standard file naming</b> — saved files are named with your project name and a date folder so they sort logically.</Li>
-              <Li><b>My Files</b> — a single place for your recent video deliverables: edited videos, captions, thumbnails and publish packages (speech/mixes live in the audio tools).</Li>
+              <Li><b>Pace control</b> <InfoTip text="A slider in Create Speech changes delivery speed without rewriting text (Slower / Natural / Faster)." label="Pace control details" /></Li>
+              <Li><b>Smarter pauses</b> <InfoTip text="The reader breathes after sentences, pauses at commas, and waits longer at paragraph breaks." label="Smarter pauses details" /></Li>
+              <Li><b>Swahili clean-up</b> <InfoTip text="Numbers, dates and times become spoken Swahili; missing full stops are added so passages do not run on." label="Swahili clean-up details" /></Li>
+              <Li><b>File naming</b> <InfoTip text="Saved files use your project name and a date folder so they sort logically." label="File naming details" /></Li>
+              <Li><b>My Files</b> <InfoTip text="Edited videos, captions, thumbnails and publish packages in one place; speech and mixes stay in audio tools." label="My Files details" /></Li>
             </ul>
           </Section>
         </div>

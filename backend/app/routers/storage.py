@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app.config import (
@@ -15,8 +15,10 @@ from app.config import (
     TEMP_AUDIO_DIR,
 )
 from app.services.audio_processor import (
+    SFX_KINDS,
     _ffmpeg_available,
     analyze_reference,
+    generate_sfx,
     get_duration,
     mix_voice_with_music,
     transform_audio,
@@ -26,6 +28,7 @@ from app.services.beat_sync_processor import (
     get_beat_synced_zoom_expr,
 )
 from app.services.r2_storage import download_reference, upload_output
+from PIL import ImageFont
 
 router = APIRouter(prefix="/api/v1", tags=["storage"])
 logger = logging.getLogger(__name__)
@@ -206,3 +209,66 @@ def bpm(req: BpmRequest):
     finally:
         if path and Path(path).name.startswith("bpm_"):
             _cleanup_file(path)
+
+
+class SfxRequest(BaseModel):
+    kind: str = Field(..., min_length=1)
+    duration_sec: float | None = Field(None, ge=0.15, le=5.0)
+    output_format: str = Field("mp3", pattern="^(mp3|wav)$")
+
+
+@router.post("/audio/sfx")
+def create_sfx(req: SfxRequest):
+    """Generate a short sound effect locally and return it as a stored audio file."""
+    if not _ffmpeg_available():
+        raise HTTPException(status_code=503, detail="FFmpeg required for SFX generation")
+    kind = str(req.kind or "").strip().lower()
+    if kind not in SFX_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of: {', '.join(SFX_KINDS)}")
+
+    job_id = uuid.uuid4().hex
+    work_dir = TEMP_AUDIO_DIR / "sfx_jobs" / job_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    ext = ".wav" if req.output_format == "wav" else ".mp3"
+    out_path = str(work_dir / f"sfx_{kind}_{job_id}{ext}")
+    try:
+        generate_sfx(kind, out_path, duration_sec=req.duration_sec)
+        r2_key = f"outputs/sfx_{kind}_{job_id}{ext}"
+        url = upload_output(out_path, r2_key)
+        return {
+            "kind": kind,
+            "audio_r2_key": r2_key,
+            "audio_url": url,
+            "duration_seconds": get_duration(out_path),
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SFX generation failed: {e}")
+    finally:
+        _cleanup_dir(work_dir)
+
+
+@router.post("/fonts/upload")
+async def upload_brand_font(font: UploadFile = File(...)):
+    """Upload a brand font (.ttf/.otf) for thumbnails/captions."""
+    name = Path(font.filename or "").name
+    suffix = Path(name).suffix.lower()
+    if suffix not in {".ttf", ".otf"}:
+        raise HTTPException(status_code=400, detail="Font must be .ttf or .otf")
+    data = await font.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Font must be 5 MB or smaller")
+    fonts_dir = TEMP_AUDIO_DIR / "brand_fonts"
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+    font_id = uuid.uuid4().hex
+    dest = fonts_dir / f"{font_id}{suffix}"
+    dest.write_bytes(data)
+    try:
+        family, style = ImageFont.truetype(str(dest), 24).getname()
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Invalid font file")
+    return {"font_path": str(dest), "font_name": family or Path(name).stem, "font_style": style or ""}
