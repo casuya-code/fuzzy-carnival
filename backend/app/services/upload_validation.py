@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+
+import requests
+
+from app.config import UPLOAD_SCAN_TIMEOUT_SEC, UPLOAD_SCAN_URL
 
 
 AUDIO_MAGIC = {
@@ -59,3 +64,22 @@ def validate_audio_upload(filename: str, content_type: str | None, data: bytes) 
     if sniff and (ct.startswith("audio/") or ct in {"video/mp4", "video/webm"}):
         return
     raise ValueError("Uploaded file type does not match its content")
+
+
+def scan_upload(filename: str, content_type: str | None, data: bytes) -> None:
+    if not UPLOAD_SCAN_URL:
+        return
+    payload = {
+        "filename": filename,
+        "content_type": content_type or "",
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    try:
+        r = requests.post(UPLOAD_SCAN_URL, json=payload, timeout=UPLOAD_SCAN_TIMEOUT_SEC)
+        if r.status_code >= 400:
+            raise ValueError("Upload rejected by scan service")
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(f"Upload scan failed: {e}") from e

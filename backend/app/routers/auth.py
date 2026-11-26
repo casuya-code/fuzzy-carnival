@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config import EXPOSE_RESET_TOKENS
 from app.rate_limit import rate_limit
+from app.services.mailer import send_password_reset_email
 from app.services.user_store import (
     authenticate_user,
     bump_token_version,
@@ -106,9 +107,11 @@ def password_reset_request(req: PasswordResetRequest):
     result = create_password_reset(str(req.email))
     # Avoid account enumeration. Return token only in explicitly enabled dev mode.
     resp = {"ok": True, "message": "If the account exists, a password reset token was created."}
-    if result and EXPOSE_RESET_TOKENS:
-        resp["reset_token"] = result["reset_token"]
-        resp["expires_in_sec"] = result["expires_in_sec"]
+    if result:
+        send_password_reset_email(result["email"], result["reset_token"])
+        if EXPOSE_RESET_TOKENS:
+            resp["reset_token"] = result["reset_token"]
+            resp["expires_in_sec"] = result["expires_in_sec"]
     return resp
 
 

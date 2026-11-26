@@ -29,7 +29,7 @@ from app.services.beat_sync_processor import (
     get_beat_synced_zoom_expr,
 )
 from app.services.r2_storage import download_reference, upload_output
-from app.services.upload_validation import validate_audio_upload
+from app.services.upload_validation import scan_upload, validate_audio_upload
 from app.auth import require_api_key
 from app.rate_limit import rate_limit
 from PIL import ImageFont
@@ -97,8 +97,9 @@ async def local_upload(key: str, request: Request):
                 f.write(chunk)
         tmp.replace(dest)
         try:
-            header = dest.read_bytes()[:64]
-            validate_audio_upload(dest.name, content_type, header)
+            data = dest.read_bytes()
+            validate_audio_upload(dest.name, content_type, data[:64])
+            scan_upload(dest.name, content_type, data)
         except ValueError as e:
             dest.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=str(e)) from e
