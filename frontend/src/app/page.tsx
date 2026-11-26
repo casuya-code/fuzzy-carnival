@@ -64,7 +64,11 @@ const tools = [
 ];
 
 export default function Home() {
-  const { user, loading } = useAuth();
+  const { user, loading, logout } = useAuth();
+  const initial = (user?.email || "?").trim().charAt(0).toUpperCase() || "?";
+  const avatarStyle = user?.avatar
+    ? { backgroundImage: `url("${user.avatar}")`, backgroundSize: "cover", backgroundPosition: "center" }
+    : undefined;
 
   return (
     <div className="space-y-6 py-2 sm:py-4">
@@ -80,13 +84,54 @@ export default function Home() {
           <span className="flex items-center justify-center rounded-full bg-gray-100 px-2 sm:px-3 py-2 text-gray-700 font-medium text-center">Save &amp; download</span>
         </div>
         {!loading && !user ? (
-          <div className="mt-5 flex flex-wrap gap-3">
-            <Link href="/signup" className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700">Create account</Link>
-            <Link href="/login" className="rounded-lg border px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">Log in</Link>
+          <div className="mt-5 grid w-full grid-cols-2 gap-3 border-t border-gray-100 pt-5">
+            <Link
+              href="/signup"
+              className="flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+            >
+              Create account
+            </Link>
+            <Link
+              href="/login"
+              className="flex w-full items-center justify-center rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+            >
+              Log in
+            </Link>
           </div>
         ) : !loading && user ? (
-          <div className="mt-5 rounded-lg bg-green-50 border border-green-100 px-4 py-3 text-sm text-green-800">
-            Signed in as <span className="font-medium">{user.email}</span>
+          <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-green-100 bg-green-50/70 p-3">
+            <div
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white shadow-sm"
+              style={avatarStyle}
+              title={user.email}
+              aria-label={`Signed in as ${user.email}`}
+            >
+              {!user.avatar && initial}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-green-700">
+                <span className="h-2 w-2 rounded-full bg-green-500" aria-hidden="true" />
+                Active now
+              </div>
+              <div className="truncate text-sm font-semibold text-green-900">{user.name || user.email}</div>
+              {user.name && (
+                <div className="truncate text-xs text-green-700" title={user.email}>{user.email}</div>
+              )}
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Link
+                href="/profile"
+                className="rounded-lg bg-white px-3 py-2 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              >
+                Profile
+              </Link>
+              <button
+                onClick={logout}
+                className="rounded-lg border border-green-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Log out
+              </button>
+            </div>
           </div>
         ) : null}
       </section>
