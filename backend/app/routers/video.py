@@ -44,6 +44,7 @@ from app.services.captions_processor import (
 )
 from app.services.r2_storage import download_reference, upload_output
 from app.services.sfx_generator import DEFAULT_SFX, DEFAULT_SFX_LEVEL, normalize_sfx, normalize_sfx_level
+from app.services.upload_validation import copy_upload_capped, resolve_brand_font_path
 from app.services.text_styles import has_lower_third, normalize_lower_third, normalize_text_style
 from app.services.video_overlays import DEFAULT_OVERLAY as DEFAULT_EFFECT_OVERLAY, normalize_overlay as normalize_effect_overlay
 from app.services.video_transitions import (
@@ -57,7 +58,7 @@ from app.services.video_transitions import (
 from app.services.video_processor import stitch_clips_with_audio, stitch_silent_clips, trim_and_zoom_clip
 from app.auth import require_api_key
 from app.rate_limit import rate_limit
-from app.services.job_context import check_cancelled, report_progress
+from app.services.job_context import JobCancelled, check_cancelled, report_progress
 from app.observability import timed
 
 router = APIRouter(prefix="/api/v1/video", tags=["video"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
@@ -114,6 +115,46 @@ def _effect_overlay(value: str | None) -> str:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _lower_third_or_400(raw: str | None):
+    try:
+        return normalize_lower_third(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _font_path_or_400(raw: str | None) -> str | None:
+    try:
+        return resolve_brand_font_path(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _parse_segment_keys(raw: str) -> list[str]:
+    """Accept a JSON array (including keys containing commas) or CSV fallback."""
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, str):
+            return [parsed] if parsed.strip() else []
+        if isinstance(parsed, list):
+            return [str(k) for k in parsed if str(k).strip()]
+        return []
+    except Exception:
+        return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def _caption_window(audio_duration: float, intro: float, outro: float) -> tuple[float, float]:
+    """Clamp caption timing so words never start/run past the audio (M19)."""
+    intro = max(0.0, float(intro))
+    outro = max(0.0, float(outro))
+    remaining = max(0.0, float(audio_duration) - intro)
+    if remaining <= 0.25:
+        return 0.0, 0.0
+    voice = min(max(0.0, float(audio_duration) - intro - outro), remaining)
+    if voice <= 0.25:
+        return 0.0, 0.0
+    return intro, voice
+
+
 def _save_overlay_upload(image: UploadFile | None, work_dir: Path, job_id: str) -> str | None:
     """Validate and save a user-supplied badge image; return its local path."""
     if image is None:
@@ -122,14 +163,8 @@ def _save_overlay_upload(image: UploadFile | None, work_dir: Path, job_id: str) 
     suffix = Path(image.filename or "").suffix.lower()
     if not content_type.startswith("image/") or suffix not in ALLOWED_IMAGE_SUFFIXES:
         raise HTTPException(status_code=400, detail="overlay_image must be a PNG, JPG or WebP image")
-    image.file.seek(0, 2)
-    size_bytes = image.file.tell()
-    image.file.seek(0)
-    if size_bytes > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="overlay_image must be 10 MB or smaller")
     path = work_dir / f"overlay_{job_id}{suffix}"
-    with open(path, "wb") as f:
-        shutil.copyfileobj(image.file, f)
+    copy_upload_capped(image, path, max_bytes=10 * 1024 * 1024)
     return str(path)
 
 
@@ -228,8 +263,7 @@ async def process_video(
         if audio is not None:
             a_suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
             audio_path = str(work_dir / f"audio_{job_id}{a_suffix}")
-            with open(audio_path, "wb") as f:
-                shutil.copyfileobj(audio.file, f)
+            copy_upload_capped(audio, Path(audio_path))
         else:
             # Download into the job dir so cleanup is automatic
             audio_path = download_reference(
@@ -249,8 +283,7 @@ async def process_video(
             suffix = Path(up.filename or f"clip_{i}.mp4").suffix or ".mp4"
             raw_path = str(work_dir / f"raw_{i}{suffix}")
             proc_path = str(work_dir / f"proc_{i}.mp4")
-            with open(raw_path, "wb") as f:
-                shutil.copyfileobj(up.file, f)
+            copy_upload_capped(up, Path(raw_path))
             try:
                 trim_and_zoom_clip(
                     input_path=raw_path,
@@ -258,7 +291,7 @@ async def process_video(
                     trim_end_sec=trim_end_sec,
                     aspect_ratio=aspect_ratio,
                     zoom_expr=zoom_expr,
-                    overlay=overlay_fx,
+                    overlay="none",  # applied once at stitch time (H26)
                     preview=preview,
                 )
             finally:
@@ -270,7 +303,8 @@ async def process_video(
         ass_path = None
         caption_meta: dict = {}
         style = _text_style_or_400(caption_style)
-        lower = normalize_lower_third(lower_third)
+        lower = _lower_third_or_400(lower_third)
+        font_path = _font_path_or_400(font_path)
         script = script_text or ""
         if (script.strip() or has_lower_third(lower)):
             intro = (
@@ -284,7 +318,7 @@ async def process_video(
                 else DEFAULT_OUTRO_SEC
             )
             audio_duration = get_duration(audio_path)
-            voice_duration = max(1.0, audio_duration - intro - outro)
+            intro, voice_duration = _caption_window(audio_duration, intro, outro)
             ass_path = str(work_dir / "captions.ass")
             generate_word_by_word_ass(
                 script_text=script,
@@ -357,6 +391,8 @@ async def process_video(
         }
     except HTTPException:
         raise
+    except JobCancelled:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except subprocess.CalledProcessError as e:
@@ -418,8 +454,7 @@ async def process_video_batch(
         if audio is not None:
             a_suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
             batch_audio_path = str(work_dir / f"audio{job_id}{a_suffix}")
-            with open(batch_audio_path, "wb") as f:
-                shutil.copyfileobj(audio.file, f)
+            copy_upload_capped(audio, Path(batch_audio_path))
         elif audio_r2_key:
             batch_audio_path = download_reference(
                 audio_r2_key,
@@ -433,8 +468,7 @@ async def process_video_batch(
             suffix = Path(up.filename or f"clip_{i}.mp4").suffix or ".mp4"
             raw_path = str(work_dir / f"raw_{i}{suffix}")
             proc_path = str(work_dir / f"proc_{i}.mp4")
-            with open(raw_path, "wb") as f:
-                shutil.copyfileobj(up.file, f)
+            copy_upload_capped(up, Path(raw_path))
             try:
                 trim_and_zoom_clip(
                     input_path=raw_path,
@@ -442,7 +476,7 @@ async def process_video_batch(
                     trim_end_sec=trim_end_sec,
                     aspect_ratio=aspect_ratio,
                     zoom_expr=zoom_expr,
-                    overlay=overlay_fx,
+                    overlay="none",  # applied once at stitch time (H26)
                     preview=preview,
                 )
             except Exception as e:
@@ -479,6 +513,8 @@ async def process_video_batch(
             "zoom_synced": zoom_expr is not None,
         }
     except HTTPException:
+        raise
+    except JobCancelled:
         raise
     except subprocess.CalledProcessError as e:
         err = (e.stderr or b"").decode("utf-8", errors="ignore") if isinstance(e.stderr, (bytes, bytearray)) else str(e)
@@ -566,8 +602,7 @@ async def finalize_video(
         if audio is not None:
             a_suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
             audio_path = str(work_dir / f"audio_{job_id}{a_suffix}")
-            with open(audio_path, "wb") as f:
-                shutil.copyfileobj(audio.file, f)
+            copy_upload_capped(audio, Path(audio_path))
         else:
             audio_path = download_reference(
                 audio_r2_key,  # type: ignore[arg-type]
@@ -586,7 +621,8 @@ async def finalize_video(
         ass_path = None
         caption_meta: dict = {}
         style = _text_style_or_400(caption_style)
-        lower = normalize_lower_third(lower_third)
+        lower = _lower_third_or_400(lower_third)
+        font_path = _font_path_or_400(font_path)
         script = script_text or ""
         if (script.strip() or has_lower_third(lower)):
             intro = (
@@ -600,7 +636,7 @@ async def finalize_video(
                 else DEFAULT_OUTRO_SEC
             )
             audio_duration = get_duration(audio_path)
-            voice_duration = max(1.0, audio_duration - intro - outro)
+            intro, voice_duration = _caption_window(audio_duration, intro, outro)
             ass_path = str(work_dir / "captions.ass")
             generate_word_by_word_ass(
                 script_text=script,
@@ -672,6 +708,8 @@ async def finalize_video(
             **caption_meta,
         }
     except HTTPException:
+        raise
+    except JobCancelled:
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

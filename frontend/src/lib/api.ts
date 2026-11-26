@@ -9,27 +9,90 @@ export const API_BASE = (
 const PUBLIC_API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 const USER_TOKEN_KEY = "yakodonyo_auth_token";
 
-export function getUserToken(): string | null {
-  if (typeof window === "undefined") return null;
+/** Decode a JWT payload (segment 1) without verifying the signature. */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
-    return localStorage.getItem(USER_TOKEN_KEY);
+    const parts = token.split(".");
+    if (parts.length !== 3 || !parts[1]) return null;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const json = typeof atob === "function"
+      ? atob(padded)
+      : Buffer.from(base64, "base64").toString("utf8");
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
 }
 
+export function getUserToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const token = window.localStorage.getItem(USER_TOKEN_KEY);
+    if (!token) return null;
+    const claims = decodeJwtPayload(token);
+    if (claims) {
+      const exp = typeof claims.exp === "number" ? claims.exp : Number(claims.exp);
+      if (Number.isFinite(exp) && exp <= Date.now() / 1000) {
+        window.localStorage.removeItem(USER_TOKEN_KEY);
+        return null;
+      }
+    }
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+/** Stable account identifier from the JWT, used to scope client-side history. */
+export function getUserUid(): string | null {
+  const token = getUserToken();
+  if (!token) return null;
+  const claims = decodeJwtPayload(token);
+  const raw = claims?.uid ?? claims?.sub ?? claims?.email;
+  if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
 export function setUserToken(token: string | null) {
   if (typeof window === "undefined") return;
   try {
-    if (token) localStorage.setItem(USER_TOKEN_KEY, token);
-    else localStorage.removeItem(USER_TOKEN_KEY);
+    if (token) window.localStorage.setItem(USER_TOKEN_KEY, token);
+    else window.localStorage.removeItem(USER_TOKEN_KEY);
   } catch {}
 }
 
-export function backendAuthHeaders(): Record<string, string> {
-  const token = getUserToken();
+/**
+ * Authorization header for backend calls. `tokenOverride` lets a long-lived
+ * operation (e.g. video job polling) pin the token it started with.
+ */
+export function backendAuthHeaders(tokenOverride?: string | null): Record<string, string> {
+  const token = tokenOverride === undefined ? getUserToken() : tokenOverride;
   if (token) return { Authorization: `Bearer ${token}` };
   return PUBLIC_API_KEY ? { Authorization: `Bearer ${PUBLIC_API_KEY}` } : {};
+}
+
+export type ApiError = Error & { status?: number };
+
+function apiError(message: string, status?: number): ApiError {
+  const error = new Error(message) as ApiError;
+  if (typeof status === "number") error.status = status;
+  return error;
+}
+
+/** Auth failures are the only reason to discard an otherwise valid session. */
+export function isAuthError(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  return status === 401 || status === 403;
+}
+
+export function clearTokenIfAuthError(error: unknown): boolean {
+  if (!isAuthError(error)) return false;
+  setUserToken(null);
+  return true;
 }
 
 export interface AuthUser {
@@ -74,7 +137,10 @@ export async function me(): Promise<AuthUser> {
     headers: backendAuthHeaders(),
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Auth check failed (${res.status})`);
+  if (!res.ok) {
+    const detail = extractDetail(await res.text());
+    throw apiError(detail || `Auth check failed (${res.status})`, res.status);
+  }
   const data = await res.json();
   return data.user as AuthUser;
 }
@@ -112,7 +178,10 @@ export async function logoutAll(): Promise<void> {
     method: "POST",
     headers: backendAuthHeaders(),
   });
-  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Logout failed (${res.status})`);
+  if (!res.ok) {
+    const detail = extractDetail(await res.text());
+    throw apiError(detail || `Logout failed (${res.status})`, res.status);
+  }
 }
 
 export async function requestPasswordReset(email: string): Promise<{ ok: boolean; message?: string; reset_token?: string }> {
@@ -223,7 +292,6 @@ export async function synthesize(
   signal?: AbortSignal
 ): Promise<SynthesizeResponse> {
   const started = performance.now();
-  let status = "ok";
   try {
     const res = await fetch(`${API_BASE}/api/v1/synthesize`, {
       method: "POST",
@@ -232,7 +300,6 @@ export async function synthesize(
       signal,
     });
     if (!res.ok) {
-      status = "error";
       const detail = extractDetail(await res.text());
       throw new Error(detail || `Synthesis failed (${res.status})`);
     }
@@ -243,7 +310,7 @@ export async function synthesize(
     reportMetric("speech.generate", performance.now() - started, {
       engine: (payload as { engine?: string }).engine || "default",
       language: payload.language || "en",
-      status,
+      status: (e as { name?: string })?.name === "AbortError" ? "cancelled" : "error",
     });
     throw e;
   }
@@ -272,26 +339,28 @@ export async function normalizePreview(
   return data.normalized as string;
 }
 
-export async function warmEngine(engine: Engine): Promise<void> {
+/** Best-effort pre-warm. Reports failure explicitly instead of implying success. */
+export async function warmEngine(engine: Engine): Promise<boolean> {
   try {
-    await fetch(`${API_BASE}/api/v1/warm`, {
+    const res = await fetch(`${API_BASE}/api/v1/warm`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
       body: JSON.stringify({ engine }),
     });
+    return res.ok;
   } catch {
-    // best-effort pre-warm
+    return false;
   }
 }
 
 export async function requestUploadUrl(
   filename: string,
   contentType: string,
-  contentLength?: number
+  contentLength: number
 ): Promise<{ upload_url: string; key: string }> {
   const res = await fetch("/api/upload-url", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify({ filename, contentType, contentLength }),
   });
   if (!res.ok) throw new Error(`Upload URL request failed: ${res.status}`);
@@ -299,35 +368,22 @@ export async function requestUploadUrl(
 }
 
 export async function uploadToR2(uploadUrl: string, file: Blob, contentType: string) {
-  return measured("upload.blob", { kind: "r2" }, async () => {
+  // The signed content type has no codec parameters (e.g. audio/webm, not
+  // audio/webm;codecs=opus). Auth belongs only on backend local-upload URLs;
+  // sending it to R2 can invalidate the presigned request.
+  const signedType = contentType.split(";")[0].trim().toLowerCase();
+  const isLocal = uploadUrl.startsWith(`${API_BASE}/api/v1/local-upload/`);
+  return measured("upload.blob", { kind: isLocal ? "local" : "r2" }, async () => {
     const res = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": contentType },
+      headers: {
+        "Content-Type": signedType,
+        ...(isLocal ? backendAuthHeaders() : {}),
+      },
       body: file,
     });
     if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
     return true;
-  });
-}
-
-/** Upload to the backend's local-upload endpoint (dev fallback when R2 is unset). */
-export async function uploadLocalBlob(
-  key: string,
-  file: Blob,
-  contentType: string
-): Promise<string> {
-  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-  return measured("upload.blob", { kind: "local" }, async () => {
-    const res = await fetch(
-      `${API_BASE}/api/v1/local-upload/${encodedKey}`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": contentType, ...backendAuthHeaders() },
-        body: file,
-      }
-    );
-    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-    return key;
   });
 }
 
@@ -732,39 +788,90 @@ function formDataFrom(payload: Record<string, unknown>): FormData {
   return fd;
 }
 
+/**
+ * Auth headers are pinned when a job is submitted so a token change during a
+ * long render cannot make its later status/cancel calls look like a stranger.
+ */
+const jobHeaders = new Map<string, Record<string, string>>();
+
+function pinnedJobHeaders(jobId: string): Record<string, string> {
+  let headers = jobHeaders.get(jobId);
+  if (!headers) {
+    headers = backendAuthHeaders();
+    jobHeaders.set(jobId, headers);
+  }
+  return headers;
+}
+
+type JobRequestOptions = { signal?: AbortSignal };
+
 /** Submit a render as a background job. Payload matches the sync API payloads. */
 export function submitVideoJob(
   kind: "process" | "batch" | "finalize",
   payload: Record<string, unknown>,
 ): Promise<VideoJobAccepted> {
   return measured("video.job.submit", { kind }, async () => {
+    const headers = backendAuthHeaders();
     const res = await fetch(`${API_BASE}/api/v1/video/jobs/${kind}`, {
       method: "POST",
       body: formDataFrom(payload),
-      headers: backendAuthHeaders(),
+      headers,
     });
     if (!res.ok) {
       const detail = extractDetail(await res.text());
       throw new Error(detail || `Video job submission failed (${res.status})`);
     }
-    return res.json();
+    const accepted = (await res.json()) as VideoJobAccepted;
+    if (accepted?.job_id) jobHeaders.set(accepted.job_id, headers);
+    return accepted;
   });
 }
 
-export async function getVideoJob(jobId: string): Promise<VideoJobStatus> {
+export async function getVideoJob(
+  jobId: string,
+  options: JobRequestOptions = {},
+): Promise<VideoJobStatus> {
   const res = await fetch(`${API_BASE}/api/v1/video/jobs/${encodeURIComponent(jobId)}`, {
-    headers: backendAuthHeaders(),
+    headers: pinnedJobHeaders(jobId),
+    signal: options.signal,
   });
   if (!res.ok) throw new Error(`Job status failed (${res.status})`);
   return res.json();
 }
 
-export async function cancelVideoJob(jobId: string): Promise<void> {
+export async function cancelVideoJob(
+  jobId: string,
+  options: JobRequestOptions = {},
+): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/video/jobs/${encodeURIComponent(jobId)}`, {
     method: "DELETE",
-    headers: backendAuthHeaders(),
+    headers: pinnedJobHeaders(jobId),
+    signal: options.signal,
   });
   if (!res.ok) throw new Error(`Job cancel failed (${res.status})`);
+}
+
+function abortableSleep(
+  ms: number,
+  signal: AbortSignal,
+  abortError: () => Error,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(abortError());
+      return;
+    }
+    let onAbort: () => void;
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /** Poll a background render until it reaches a terminal state. */
@@ -780,21 +887,63 @@ export async function waitForVideoJob(
   const started = performance.now();
   const interval = options.intervalMs ?? 1000;
   const timeout = options.timeoutMs ?? 900_000;
-  while (true) {
-    if (options.signal?.aborted) throw new Error("Video job cancelled");
-    if (performance.now() - started > timeout) throw new Error("Video job timed out");
-    const status = await getVideoJob(jobId);
-    options.onProgress?.(status);
-    if (["succeeded", "failed", "cancelled"].includes(status.status)) {
-      reportMetric("video.job.total", performance.now() - started, {
-        kind: status.kind,
-        status: status.status,
-      });
-      if (status.status === "failed") throw new Error(status.error || "Video job failed");
-      if (status.status === "cancelled") throw new Error("Video job cancelled");
-      return status;
+  const controller = new AbortController();
+  let externallyAborted = false;
+  let timedOut = false;
+
+  const onExternalAbort = () => {
+    externallyAborted = true;
+    controller.abort();
+  };
+  if (options.signal?.aborted) onExternalAbort();
+  else options.signal?.addEventListener("abort", onExternalAbort, { once: true });
+
+  const failure = () => {
+    const error = new Error(timedOut ? "Video job timed out" : "Video job cancelled");
+    error.name = timedOut ? "TimeoutError" : "AbortError";
+    return error;
+  };
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeout);
+
+  try {
+    while (true) {
+      if (controller.signal.aborted) throw failure();
+      let status: VideoJobStatus;
+      try {
+        status = await getVideoJob(jobId, { signal: controller.signal });
+      } catch (e) {
+        if (controller.signal.aborted) throw failure();
+        throw e;
+      }
+      if (controller.signal.aborted) throw failure();
+      options.onProgress?.(status);
+      if (["succeeded", "failed", "cancelled"].includes(status.status)) {
+        reportMetric("video.job.total", performance.now() - started, {
+          kind: status.kind,
+          status: status.status,
+        });
+        jobHeaders.delete(jobId);
+        if (status.status === "failed") throw new Error(status.error || "Video job failed");
+        if (status.status === "cancelled") throw new Error("Video job cancelled");
+        return status;
+      }
+      await abortableSleep(interval, controller.signal, failure);
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, interval));
+  } catch (e) {
+    if (externallyAborted) {
+      // Best effort: release the backend slot even though polling has stopped.
+      try {
+        await cancelVideoJob(jobId);
+      } catch {}
+      jobHeaders.delete(jobId);
+    }
+    throw e;
+  } finally {
+    clearTimeout(deadline);
+    options.signal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -917,7 +1066,7 @@ export interface ReferenceAnalysis {
 export async function detectBpm(key: string): Promise<{ bpm: number; cycle_sec: number }> {
   const res = await fetch(`${API_BASE}/api/v1/audio/bpm`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify({ key }),
   });
   if (!res.ok) {
@@ -930,7 +1079,7 @@ export async function detectBpm(key: string): Promise<{ bpm: number; cycle_sec: 
 export async function analyzeAudio(key: string): Promise<ReferenceAnalysis> {
   const res = await fetch(`${API_BASE}/api/v1/audio/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
     body: JSON.stringify({ key }),
   });
   if (!res.ok) {

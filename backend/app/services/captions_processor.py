@@ -66,11 +66,14 @@ def time_words(
     words = script_text.strip().split()
     if not words:
         return []
+    # Nothing to show when the remaining speech window is tiny (M19).
+    voice_duration = max(0.0, float(voice_duration))
+    if voice_duration <= 0.25:
+        return []
+    cursor = max(0.0, float(intro_delay_sec))
     weights = [_weight(w) for w in words]
     total = float(sum(weights)) or 1.0
-    voice_duration = max(0.1, float(voice_duration))
     out = []
-    cursor = max(0.0, float(intro_delay_sec))
     for w, weight in zip(words, weights):
         dur = (weight / total) * voice_duration
         out.append({
@@ -224,14 +227,18 @@ def ass_filter_arg(ass_path: str, working_dir: str | None = None, fontsdir: str 
     Running FFmpeg with cwd=the .ass directory lets us pass a bare filename,
     which avoids Windows drive-letter/colon escaping issues entirely.
     """
+    # Inside single-quoted FFmpeg values only backslash and apostrophe need
+    # escaping; escaping ':' here double-escapes Windows paths (H35).
+    def _escape(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
+
     if working_dir:
-        name = os.path.basename(ass_path)
+        name = _escape(os.path.basename(ass_path))
     else:
-        name = os.path.abspath(ass_path).replace("\\", "/").replace(":", "\\:")
-    name = name.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        name = _escape(os.path.abspath(ass_path).replace("\\", "/"))
     arg = f"ass='{name}'"
     if fontsdir:
-        fd = os.path.abspath(fontsdir).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        fd = _escape(os.path.abspath(fontsdir).replace("\\", "/"))
         arg = f"ass='{name}':fontsdir='{fd}'"
     return arg
 

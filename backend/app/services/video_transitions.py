@@ -43,10 +43,13 @@ _FIRE_F = (
 _FIRE_EDGE = f"P+0.16*sin(10*Y/H+P*14)+0.08*(random(floor(Y/8)+floor(P*24))-0.5)"
 _WARP = f"0.10*sin(12*Y/H+P*7)+0.05*sin(25*Y/H-P*11)"
 _STREAK_EDGE = f"P+{_WARP}*{_S}"
+# Grow the drops well past the frame edges so P=1 fully reveals clip B
+# (including corners) instead of leaving the old uncovered patches (M17).
+_DROP_RADIUS_SCALE = 2.4
 _DROPS = (
-    "lt(hypot(X/W-0.28,Y/H-0.32),0.45*P)"
-    "+lt(hypot(X/W-0.72,Y/H-0.58),0.38*P)"
-    "+lt(hypot(X/W-0.50,Y/H-0.82),0.30*P)"
+    f"lt(hypot(X/W-0.28,Y/H-0.32),{0.45 * _DROP_RADIUS_SCALE:.3f}*P)"
+    f"+lt(hypot(X/W-0.72,Y/H-0.58),{0.38 * _DROP_RADIUS_SCALE:.3f}*P)"
+    f"+lt(hypot(X/W-0.50,Y/H-0.82),{0.30 * _DROP_RADIUS_SCALE:.3f}*P)"
 )
 # Start tiny, grow past the frame edges so the final frame is entirely clip B.
 _HEART_SCALE = "0.001+2.999*P"
@@ -248,7 +251,12 @@ def transition_events(
     for i in range(1, len(durations)):
         name = normalize_transition(transitions[i - 1])
         max_overlap = min(float(durations[i - 1]), float(durations[i])) * 0.5
-        overlap = max(0.05, min(requested, max_overlap))
+        if max_overlap < 0.05:
+            raise ValueError(
+                "Transition duration exceeds the available clip duration; "
+                "clips must be at least 0.1 seconds long"
+            )
+        overlap = min(requested, max_overlap)
         offset = max(0.0, elapsed - overlap)
         events.append((name, offset, overlap))
         elapsed += float(durations[i]) - overlap

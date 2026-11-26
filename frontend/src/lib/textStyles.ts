@@ -185,7 +185,7 @@ const bool = (value: unknown, fallback: boolean): boolean =>
   typeof value === "boolean" ? value : fallback;
 
 /** Accepts a stored JSON string or a partial object and returns a safe style. */
-export function resolveTextStyle(value: unknown): TextStyle {
+export function resolveTextStyle(value: unknown, extraFonts: readonly string[] = []): TextStyle {
   let raw: unknown = value;
   if (typeof raw === "string") {
     try {
@@ -197,16 +197,23 @@ export function resolveTextStyle(value: unknown): TextStyle {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_TEXT_STYLE };
   const input = raw as Partial<TextStyle>;
   const preset = str(input.preset, "custom") as TextStylePresetId;
-  const base = preset in TEXT_STYLE_PRESETS
+  const isKnownPreset = Object.prototype.hasOwnProperty.call(TEXT_STYLE_PRESETS, preset);
+  const base = isKnownPreset
     ? TEXT_STYLE_PRESETS[preset as PresetId]
     : DEFAULT_TEXT_STYLE;
   const alignment = str(input.alignment, base.alignment);
   const position = str(input.position, base.position);
+  const fontFamily = typeof input.font_family === "string" ? input.font_family.trim().slice(0, 60) : "";
+  const customFonts = new Set(
+    extraFonts
+      .filter((name): name is string => typeof name === "string" && Boolean(name.trim()))
+      .map((name) => name.trim().slice(0, 60))
+  );
+  const fontAllowed =
+    (FONT_OPTIONS as readonly string[]).includes(fontFamily) || customFonts.has(fontFamily);
   return {
-    preset: preset in TEXT_STYLE_PRESETS || preset === "custom" ? preset : "custom",
-    font_family: FONT_OPTIONS.includes(input.font_family as (typeof FONT_OPTIONS)[number])
-      ? input.font_family!
-      : base.font_family,
+    preset: isKnownPreset || preset === "custom" ? preset : "custom",
+    font_family: fontAllowed ? fontFamily : base.font_family,
     font_scale: Math.round(clamp(input.font_scale, base.font_scale, 70, 140)),
     bold: bool(input.bold, base.bold),
     italic: bool(input.italic, base.italic),
@@ -251,7 +258,8 @@ export const applyPreset = (id: PresetId): TextStyle => ({ ...TEXT_STYLE_PRESETS
 export const withStyleChanges = (
   style: TextStyle,
   changes: Partial<TextStyle>,
-): TextStyle => resolveTextStyle({ ...style, ...changes, preset: "custom" });
+  extraFonts: readonly string[] = [],
+): TextStyle => resolveTextStyle({ ...style, ...changes, preset: "custom" }, extraFonts);
 
 export function toRgba(hex: string, opacity: number): string {
   const v = HEX_RE.test(hex) ? hex : "#000000";

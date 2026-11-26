@@ -4,9 +4,24 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
-healthcheckPath = "/health"
+# M68: point the container healthcheck at readiness, not liveness, so a degraded
+# instance is actually restarted by Railway.
+healthcheckPath = "/ready"
 healthcheckTimeout = 300
+# C3: fail deployment loudly if the persistent volume is not attached.
+requiredMountPath = "/app/data"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
 # Sleep the service when idle to save the $5 Pro budget (wakes on next request)
 sleepApplication = true
+
+# C3: keep the SQLite user database on a persistent volume instead of the
+# container's ephemeral filesystem (redeploy/sleep cycles no longer lose data).
+# Railway Config as Code cannot provision volumes. Create a volume named
+# `app-data` and attach it at `/app/data` in the Railway dashboard/CLI; the
+# requiredMountPath above makes a missing mount an explicit deployment failure.
+
+# Railway Config as Code cannot declare service variables. Set these on the
+# service (Dashboard -> Variables, or `railway variables set`):
+#   APP_DB_PATH=/app/data/app.db
+#   RAILWAY_RUN_UID=0   # volumes mount as root; the image runs as appuser

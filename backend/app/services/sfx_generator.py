@@ -12,17 +12,25 @@ import struct
 import wave
 from pathlib import Path
 
+from app.services.job_context import check_cancelled
 from app.services.video_transitions import transition_events
 
-SFX_IDS: frozenset[str] = frozenset({"off", "whoosh", "pop", "click", "lift"})
+# Audio-generation helpers use chime/applause while the transition UI uses
+# lift; accept both vocabularies and normalize to the renderable id (M18).
+SFX_ALIASES = {"chime": "lift", "applause": "lift"}
+SFX_IDS: frozenset[str] = frozenset(
+    {"off", "whoosh", "pop", "click", "lift", "chime", "applause"}
+)
 DEFAULT_SFX = "off"
 DEFAULT_SFX_LEVEL = 40
 SAMPLE_RATE = 44100
+_CANCEL_CHECK_SAMPLES = 1_000_000
 
 
 def normalize_sfx(value: str | None) -> str:
     """Return a supported SFX id or raise a user-facing ValueError."""
     name = str(value or DEFAULT_SFX).strip().lower()
+    name = SFX_ALIASES.get(name, name)
     if name not in SFX_IDS:
         allowed = ", ".join(sorted(SFX_IDS))
         raise ValueError(f"transition_sfx must be one of {allowed}")
@@ -107,14 +115,24 @@ def generate_sfx_bed(
 
     total = max(1, int(max(0.1, loop_duration_sec) * SAMPLE_RATE))
     buffer = [0.0] * total
+    processed = 0
     for index, (_name, offset, overlap) in enumerate(events):
         sound = _render(kind, overlap, 1000 + index)
         start = int(offset * SAMPLE_RATE)
         for i, sample in enumerate(sound):
+            if processed % _CANCEL_CHECK_SAMPLES == 0:
+                check_cancelled()
+            processed += 1
             position = (start + i) % total
             buffer[position] += sample
 
-    peak = max(1e-6, max(abs(sample) for sample in buffer))
+    peak = 1e-6
+    for sample in buffer:
+        if abs(sample) > peak:
+            peak = abs(sample)
+        if processed % _CANCEL_CHECK_SAMPLES == 0:
+            check_cancelled()
+        processed += 1
     scale = (volume / 100.0) * 0.55 / peak
     with wave.open(str(output_path), "wb") as wav:
         wav.setnchannels(1)

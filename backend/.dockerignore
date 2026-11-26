@@ -14,6 +14,11 @@ env/
 .env
 .env.*
 !.env.example
+# M64: never bake the local SQLite database (or its WAL sidecars) into an image.
+data/
+*.db
+*.db-shm
+*.db-wal
 temp_audio/
 weights/
 .pytest_cache/

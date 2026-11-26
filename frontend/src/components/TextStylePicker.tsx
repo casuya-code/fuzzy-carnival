@@ -41,11 +41,28 @@ export default function TextStylePicker({ value, onChange, defaultOpen = true }:
 
   useEffect(() => { setSaved(loadSavedTextPresets()); setBrandFont(loadBrandFont()); }, []);
 
+  // Uploaded fonts are not part of FONT_OPTIONS, so pass them through explicitly
+  // when the shared style validator runs.
+  const extraFonts = (): readonly string[] => {
+    const name = loadBrandFont()?.font_name;
+    return name ? [name] : [];
+  };
+
   const update = (changes: Parameters<typeof withStyleChanges>[1]) =>
-    onChange(withStyleChanges(value, changes));
+    onChange(withStyleChanges(value, changes, extraFonts()));
 
   const applySaved = (preset: SavedTextPreset) => {
-    onChange({ ...preset.style, preset: "custom" });
+    onChange(withStyleChanges(preset.style, {}, extraFonts()));
+  };
+
+  const applyBuiltInPreset = (id: Parameters<typeof applyPreset>[0]) => {
+    const next = applyPreset(id);
+    // A preset changes colours/spacing but should not silently drop a brand font.
+    if (brandFont && value.font_family === brandFont.font_name) {
+      onChange({ ...next, font_family: brandFont.font_name });
+    } else {
+      onChange(next);
+    }
   };
 
   const saveCurrent = () => {
@@ -95,7 +112,7 @@ export default function TextStylePicker({ value, onChange, defaultOpen = true }:
             <button
               key={id}
               type="button"
-              onClick={() => onChange(applyPreset(id))}
+              onClick={() => applyBuiltInPreset(id)}
               className={`rounded-full border px-2 py-1 text-[11px] font-medium capitalize transition ${
                 value.preset === id
                   ? "border-purple-500 bg-purple-600 text-white"

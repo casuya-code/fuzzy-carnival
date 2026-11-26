@@ -29,6 +29,7 @@ from app.services.captions_processor import (
     time_words,
 )
 from app.services.r2_storage import download_reference, upload_output
+from app.services.upload_validation import copy_upload_capped, resolve_brand_font_path
 from app.services.text_styles import (
     has_lower_third,
     normalize_lower_third,
@@ -69,6 +70,13 @@ def _text_style_or_400(raw):
 def _lower_third_or_400(raw):
     try:
         return normalize_lower_third(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _font_path_or_400(raw):
+    try:
+        return resolve_brand_font_path(raw)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -129,6 +137,7 @@ async def captions_burn(
         raise HTTPException(status_code=400, detail="Provide a video file or video_r2_key")
     style = _text_style_or_400(caption_style)
     lower = _lower_third_or_400(lower_third)
+    font_path = _font_path_or_400(font_path)
     script = script_text or ""
     if not script.strip() and not has_lower_third(lower):
         raise HTTPException(status_code=400, detail="script_text or a lower third is required")
@@ -136,6 +145,8 @@ async def captions_burn(
     words_per_chunk = max(1, min(int(words_per_chunk), MAX_WORDS_PER_CHUNK))
     intro = max(0.0, min(float(intro_delay_sec), MAX_INTRO_SEC))
     outro = max(0.0, min(float(outro_sec), MAX_OUTRO_SEC))
+    # Clamp once, before ASS generation, not just in the response (M30).
+    lower_duration = max(1.0, min(15.0, float(lower_third_duration_sec)))
 
     job_id = uuid.uuid4().hex
     work_dir = TEMP_AUDIO_DIR / "caption_jobs" / job_id
@@ -149,8 +160,7 @@ async def captions_burn(
         if video is not None:
             suffix = Path(video.filename or "video.mp4").suffix or ".mp4"
             video_path = str(work_dir / f"source{suffix}")
-            with open(video_path, "wb") as f:
-                shutil.copyfileobj(video.file, f)
+            copy_upload_capped(video, Path(video_path))
         else:
             # Download into the job dir so cleanup can never touch cached files.
             video_path = download_reference(
@@ -174,7 +184,7 @@ async def captions_burn(
             words_per_chunk=words_per_chunk,
             caption_style=style,
             lower_third=lower,
-            lower_third_duration_sec=lower_third_duration_sec,
+            lower_third_duration_sec=lower_duration,
             font_path=font_path,
         )
         burn_captions_onto_video(
@@ -196,7 +206,7 @@ async def captions_burn(
             ass_url = upload_output(ass_path, ass_key)
         except Exception as e:
             # Keep the successfully uploaded video; report the missing sidecar explicitly.
-            logger.warning("ASS upload failed for %s: %s", ass_key, e, exc_info=True)
+            logger.warning("ASS sidecar upload failed; continuing with video-only response", exc_info=True)
             ass_key = ""
             warning = "Captions file could not be uploaded; the video was generated successfully."
 
@@ -214,7 +224,7 @@ async def captions_burn(
             "intro_delay_sec": intro,
             "caption_style": style,
             "lower_third": lower,
-            "lower_third_duration_sec": max(1.0, min(15.0, float(lower_third_duration_sec))),
+            "lower_third_duration_sec": lower_duration,
         }
     except HTTPException:
         raise
@@ -223,6 +233,8 @@ async def captions_burn(
     except subprocess.CalledProcessError as e:
         err = (e.stderr or b"").decode("utf-8", errors="ignore") if isinstance(e.stderr, (bytes, bytearray)) else str(e)
         raise HTTPException(status_code=500, detail=f"Caption burn failed: {err[-500:]}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail="Video key not found") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Caption burn failed: {e}")
     finally:

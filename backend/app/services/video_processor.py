@@ -259,7 +259,9 @@ def stitch_clips_with_audio(
         elif upscale_dims:
             vf_parts.append(f"scale={upscale_dims[0]}:{upscale_dims[1]}:flags=lanczos")
         vf_parts.append("format=yuv420p")
-        must_encode_video = bool(ass_path or upscale_dims or preview_frame or use_overlay)
+        # The video input uses -stream_loop -1 below. Stream-copying a looped
+        # MP4 produces broken timestamps, so always re-encode (H30).
+        must_encode_video = True
 
         sfx_path = str(Path(final_output_path).with_name("transition_sfx.wav"))
         sfx_kind = normalize_sfx(transition_sfx)

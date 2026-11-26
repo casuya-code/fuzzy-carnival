@@ -135,51 +135,12 @@ function PublishPackagePageInner() {
 
   const [result, setResult] = useState<PackageResult | null>(null);
 
-  const presetApplied = useRef(false);
+  const appliedPresetId = useRef<string | null>(null);
 
-
-
-  useEffect(() => {
-
-    if (!presetId || presetApplied.current) return;
-
-    const item = getDeliverableById(presetId);
-
-    const s = item?.meta?.settings as Record<string, any> | undefined;
-
-    if (!s) return;
-
-    presetApplied.current = true;
-
-    if (typeof s.hook_words === "string") setHookWords(s.hook_words);
-
-    if (s.accent === "yellow" || s.accent === "red" || s.accent === "white") setAccent(s.accent);
-
-    if (s.gradient === "left" || s.gradient === "bottom") setGradient(s.gradient);
-
-    if (typeof s.border === "boolean") setBorder(s.border);
-
-    if (s.frame === "none" || s.frame === "solid" || s.frame === "double" || s.frame === "film") setFrame(s.frame);
-
-    if (s.shape === "none" || s.shape === "circle" || s.shape === "rect") setShape(s.shape);
-
-    if (typeof s.shorts_title === "string") setShortsTitle(s.shorts_title);
-
-    if (typeof s.clip_length_sec === "number") setClipLength(Math.max(5, Math.min(180, Math.round(s.clip_length_sec))));
-
-    if (Array.isArray(s.starts)) setStarts(s.starts.filter((n: any) => typeof n === "number").slice(0, 3));
-
-    if (Array.isArray(s.phases)) setPhases(s.phases.filter((p: any) => typeof p === "string").slice(0, 3));
-
-    if (s.text_style) setTextStyle(resolveTextStyle(s.text_style));
-
-    if (s.lower_third) setLowerThird(resolveLowerThird(s.lower_third));
-
-    if (typeof s.topic === "string") setTopic(s.topic);
-
-    if (s.language === "en" || s.language === "sw") setLanguage(s.language);
-
-  }, [presetId]);
+  const resolveStoredStyle = (value: unknown) => {
+    const name = loadBrandFont()?.font_name;
+    return resolveTextStyle(value, name ? [name] : []);
+  };
 
 
 
@@ -262,6 +223,51 @@ function PublishPackagePageInner() {
     setLowerReady(true);
 
   }, []);
+
+
+
+  // Apply presets only after the mount/restore effects above have run.
+  useEffect(() => {
+    if (!presetId || appliedPresetId.current === presetId) return;
+    if (!styleReady || !lowerReady) return;
+
+    const item = getDeliverableById(presetId);
+    const s = item?.meta?.settings as Record<string, any> | undefined;
+    if (!s) return;
+    appliedPresetId.current = presetId;
+
+    if (typeof s.hook_words === "string") setHookWords(s.hook_words);
+
+    if (s.accent === "yellow" || s.accent === "red" || s.accent === "white") setAccent(s.accent);
+
+    if (s.gradient === "left" || s.gradient === "bottom") setGradient(s.gradient);
+
+    if (typeof s.border === "boolean") setBorder(s.border);
+
+    if (s.frame === "none" || s.frame === "solid" || s.frame === "double" || s.frame === "film") {
+      setFrame(s.frame);
+      setBorder(s.frame !== "none");
+    }
+
+    if (s.shape === "none" || s.shape === "circle" || s.shape === "rect") setShape(s.shape);
+
+    if (typeof s.shorts_title === "string") setShortsTitle(s.shorts_title);
+
+    if (typeof s.clip_length_sec === "number") setClipLength(Math.max(5, Math.min(180, Math.round(s.clip_length_sec))));
+
+    if (Array.isArray(s.starts)) setStarts(s.starts.filter((n: any) => typeof n === "number").slice(0, 3));
+
+    if (Array.isArray(s.phases)) setPhases(s.phases.filter((p: any) => typeof p === "string").slice(0, 3));
+
+    if (s.text_style) setTextStyle(resolveStoredStyle(s.text_style));
+
+    if (s.lower_third) setLowerThird(resolveLowerThird(s.lower_third));
+
+    if (typeof s.topic === "string") setTopic(s.topic);
+
+    if (s.language === "en" || s.language === "sw") setLanguage(s.language);
+
+  }, [presetId, styleReady, lowerReady]);
 
 
 
@@ -427,7 +433,8 @@ function PublishPackagePageInner() {
 
         hook_words: hookWords.trim(),
 
-        accent, gradient, border,
+        // Match the thumbnail preview exactly: frame/shape imply the border.
+        accent, gradient, frame, shape, border: frame !== "none",
 
         shorts_title: shortsTitle,
 
@@ -747,7 +754,13 @@ function PublishPackagePageInner() {
 
               <label className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Hook (3 words) <InfoTip text="The main text drawn on the thumbnail." label="Hook" /></label>
 
-              <input value={hookWords} onChange={(e) => { setHookWords(e.target.value.trim().split(/\s+/).slice(0, 3).join(" ")); setThumb(null); }} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold uppercase" placeholder="AFRICA'S HIGHEST PEAK" />
+              <input
+                value={hookWords}
+                onChange={(e) => { setHookWords(e.target.value); setThumb(null); }}
+                onBlur={() => setHookWords((v) => v.trim().split(/\s+/).slice(0, 3).join(" "))}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold uppercase"
+                placeholder="AFRICA'S HIGHEST PEAK"
+              />
 
               <div className="flex flex-wrap gap-1.5">
 
@@ -983,7 +996,25 @@ function PublishPackagePageInner() {
 
                       <td className="px-2 py-2"><input value={phases[i]} onChange={(e) => setPhases((p) => p.map((x, j) => j === i ? e.target.value : x))} className="w-full rounded border border-gray-200 px-2 py-1" /></td>
 
-                      <td className="px-2 py-2 text-right"><input type="number" min={0} value={starts[i]} onChange={(e) => setStarts((s) => s.map((x, j) => j === i ? parseFloat(e.target.value) || 0 : x))} className="w-20 rounded border border-gray-200 px-2 py-1 text-right font-mono" /></td>
+                      <td className="px-2 py-2 text-right">
+                        <input
+                          type="number"
+                          min={0}
+                          max={knownDuration > 0 ? Math.max(0, knownDuration - clipLength) : undefined}
+                          value={starts[i]}
+                          onChange={(e) => {
+                            const raw = parseFloat(e.target.value);
+                            const maxStart = knownDuration > 0
+                              ? Math.max(0, knownDuration - clipLength)
+                              : Number.MAX_SAFE_INTEGER;
+                            const value = Number.isFinite(raw)
+                              ? Math.min(Math.max(raw, 0), maxStart)
+                              : 0;
+                            setStarts((s) => s.map((x, j) => (j === i ? value : x)));
+                          }}
+                          className="w-20 rounded border border-gray-200 px-2 py-1 text-right font-mono"
+                        />
+                      </td>
 
                     </tr>
 

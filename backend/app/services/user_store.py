@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import sqlite3
 import time
@@ -18,6 +19,20 @@ MAX_FAILED_LOGINS = 10
 LOCKOUT_SEC = 15 * 60
 MAX_AVATAR_BYTES = 300_000
 
+# H7: strict data-URL shape, then magic-byte verification of the decoded image.
+_AVATAR_DATA_URL_RE = re.compile(
+    r"data:image/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/]+={0,2})"
+)
+_AVATAR_MAGIC: dict[str, tuple[bytes, ...]] = {
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    "jpeg": (b"\xff\xd8\xff",),
+    "jpg": (b"\xff\xd8\xff",),
+    "gif": (b"GIF87a", b"GIF89a"),
+    "webp": (b"RIFF",),
+}
+
+_init_done = False
+
 
 def _db_path() -> Path:
     p = Path(APP_DB_PATH)
@@ -26,8 +41,11 @@ def _db_path() -> Path:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
+    # M7: WAL + busy timeout keep concurrent signup/login/reset writes from 500ing.
+    conn = sqlite3.connect(_db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
@@ -38,6 +56,7 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
 
 
 def init_db() -> None:
+    global _init_done
     with _connect() as conn:
         conn.execute(
             """
@@ -71,6 +90,13 @@ def init_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id)")
         conn.commit()
+    _init_done = True
+
+
+def _ensure_db() -> None:
+    """Initialize at most once; used by public read endpoints (M9)."""
+    if not _init_done:
+        init_db()
 
 
 def _hash_password(password: str, salt: str | None = None) -> str:
@@ -141,21 +167,41 @@ def _is_locked(row: sqlite3.Row) -> bool:
 def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
     init_db()
     email_n = email.strip().lower()
+    now = int(time.time())
     with _connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE email = ?", (email_n,)).fetchone()
         if not row:
             return None
+        uid = int(row["id"])
+
+        # H6: an expired lockout must not carry its counter into the next attempt.
+        locked_until = int(row["locked_until"] or 0)
+        if locked_until and locked_until <= now:
+            conn.execute("UPDATE users SET failed_logins=0, locked_until=0 WHERE id=?", (uid,))
+            conn.commit()
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+
         if _is_locked(row):
             raise ValueError("Account temporarily locked. Try again later.")
         if not verify_password(password, row["password_hash"]):
-            failed = int(row["failed_logins"] or 0) + 1
-            locked_until = int(time.time()) + LOCKOUT_SEC if failed >= MAX_FAILED_LOGINS else int(row["locked_until"] or 0)
-            conn.execute("UPDATE users SET failed_logins=?, locked_until=? WHERE id=?", (failed, locked_until, int(row["id"])))
+            # H5: atomic increment; parallel wrong passwords cannot lose counts.
+            conn.execute(
+                """
+                UPDATE users
+                SET failed_logins = failed_logins + 1,
+                    locked_until = CASE
+                        WHEN failed_logins + 1 >= ? THEN ?
+                        ELSE locked_until
+                    END
+                WHERE id = ?
+                """,
+                (MAX_FAILED_LOGINS, now + LOCKOUT_SEC, uid),
+            )
             conn.commit()
             return None
-        conn.execute("UPDATE users SET failed_logins=0, locked_until=0 WHERE id=?", (int(row["id"]),))
+        conn.execute("UPDATE users SET failed_logins=0, locked_until=0 WHERE id=?", (uid,))
         conn.commit()
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (int(row["id"]),)).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
     return _public_user(row)
 
 
@@ -196,7 +242,12 @@ def verify_access_token(token: str) -> dict[str, Any] | None:
         if not hmac.compare_digest(_b64url_encode(expected), sig):
             return None
         payload = json.loads(_b64url_decode(body).decode("utf-8"))
-        if int(payload.get("exp", 0)) < int(time.time()):
+        now = int(time.time())
+        # M8: a token is no longer valid during its expiry second; reject
+        # future-issued tokens beyond a small clock-skew allowance.
+        if int(payload.get("exp", 0)) <= now:
+            return None
+        if int(payload.get("iat", 0)) > now + 60:
             return None
         uid = int(payload["uid"])
         email = str(payload["email"]).lower()
@@ -229,6 +280,11 @@ def create_password_reset(email: str) -> dict[str, Any] | None:
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         now = int(time.time())
+        # H4: a newer request invalidates every still-unused older token.
+        conn.execute(
+            "UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at=0",
+            (now, int(row["id"])),
+        )
         conn.execute(
             "INSERT INTO password_resets (user_id, token_hash, expires_at, used_at, created_at) VALUES (?, ?, ?, 0, ?)",
             (int(row["id"]), token_hash, now + RESET_TOKEN_TTL_SEC, now),
@@ -250,16 +306,27 @@ def reset_password(token: str, new_password: str) -> bool:
         ).fetchone()
         if not row:
             return False
+        # H4/M5: claim the token conditionally so concurrent confirmations
+        # cannot both succeed, then apply the account change in one transaction.
+        claimed = conn.execute(
+            "UPDATE password_resets SET used_at=? WHERE id=? AND used_at=0",
+            (now, int(row["id"])),
+        )
+        if claimed.rowcount != 1:
+            return False
         pw_hash = _hash_password(new_password)
-        conn.execute("UPDATE users SET password_hash=?, failed_logins=0, locked_until=0, token_version=token_version+1 WHERE id=?", (pw_hash, int(row["user_id"])))
-        conn.execute("UPDATE password_resets SET used_at=? WHERE id=?", (now, int(row["id"])))
+        conn.execute(
+            "UPDATE users SET password_hash=?, failed_logins=0, locked_until=0, token_version=token_version+1 WHERE id=?",
+            (pw_hash, int(row["user_id"])),
+        )
         conn.commit()
     return True
 
 
 def count_users() -> int:
     """Public aggregate count of registered accounts (no personal data)."""
-    init_db()
+    # M9: don't run full schema setup on every public stats request.
+    _ensure_db()
     with _connect() as conn:
         row = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
     return int(row["n"])
@@ -276,15 +343,22 @@ def _validated_avatar(avatar: str | None) -> str:
     if not avatar:
         return ""
     value = avatar.strip()
-    if not value.startswith("data:image/") or ";base64," not in value:
+    # H7: full-match only; a prefix check allowed CSS/script injection via the tail.
+    match = _AVATAR_DATA_URL_RE.fullmatch(value)
+    if not match:
         raise ValueError("Profile image must be a base64 image data URL")
-    encoded = value.split(";base64,", 1)[1]
+    mime, encoded = match.group(1), match.group(2)
     try:
         raw = base64.b64decode(encoded, validate=True)
     except Exception as e:
         raise ValueError("Invalid profile image data") from e
     if not raw or len(raw) > MAX_AVATAR_BYTES:
         raise ValueError("Profile image is too large (300 KB maximum)")
+    expected = _AVATAR_MAGIC[mime]
+    if not any(raw.startswith(sig) for sig in expected):
+        raise ValueError("Invalid profile image data")
+    if mime == "webp" and raw[8:12] != b"WEBP":
+        raise ValueError("Invalid profile image data")
     return value
 
 
@@ -325,7 +399,8 @@ def change_password(user_id: int, current_password: str, new_password: str) -> d
     init_db()
     if len(new_password) < 8:
         raise ValueError("Password must be at least 8 characters")
-    if hmac.compare_digest(current_password, new_password):
+    # M6: compare_digest(str, str) raises TypeError for non-ASCII input.
+    if current_password == new_password:
         raise ValueError("New password must be different from the current password")
     with _connect() as conn:
         row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (int(user_id),)).fetchone()

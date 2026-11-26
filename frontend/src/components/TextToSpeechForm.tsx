@@ -50,6 +50,7 @@ export default function TextToSpeechForm({
   const [normError, setNormError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     fetch("/sample-prompts.json")
@@ -95,7 +96,8 @@ export default function TextToSpeechForm({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim() || loading) return;
+    if (!text.trim() || loading || submittingRef.current || text.length > MAX_CHARS) return;
+    submittingRef.current = true;
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true);
@@ -129,6 +131,7 @@ export default function TextToSpeechForm({
     } finally {
       if (timerRef.current) clearInterval(timerRef.current);
       abortRef.current = null;
+      submittingRef.current = false;
       setLoading(false);
       setElapsed(0);
     }

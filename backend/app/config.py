@@ -1,8 +1,10 @@
 """Single source of truth for environment/config and shared defaults."""
 
 import logging
+import math
 import os
 import re
+import secrets
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,10 @@ def _env_float(name: str, default: float, *, min_value: float | None = None, max
         val = float(raw.strip())
     except ValueError:
         logger.warning("Invalid float for %s=%r; using default=%s", name, raw, default)
+        return default
+    # H12: nan would slip past every comparison and inf would defeat ceilings.
+    if not math.isfinite(val):
+        logger.warning("Non-finite float for %s=%r; using default=%s", name, raw, default)
         return default
     if min_value is not None and val < min_value:
         logger.warning("Out-of-range float for %s=%r; using default=%s", name, raw, default)
@@ -120,7 +126,13 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("
 # Set REQUIRE_AUTH=true to fail closed when no key is configured.
 API_KEY = os.getenv("API_KEY", "").strip()
 REQUIRE_AUTH = _env_bool("REQUIRE_AUTH", False)
-AUTH_SECRET = os.getenv("AUTH_SECRET", "dev-insecure-change-me").strip() or "dev-insecure-change-me"
+# C2: never ship a publicly known signing key. Dev gets an ephemeral secret;
+# production fails fast until a stable secret is configured.
+AUTH_SECRET = os.getenv("AUTH_SECRET", "").strip()
+if not AUTH_SECRET:
+    if os.getenv("ENVIRONMENT", "dev").strip().lower() in {"prod", "production"}:
+        raise RuntimeError("AUTH_SECRET must be set in production")
+    AUTH_SECRET = secrets.token_urlsafe(32)
 AUTH_TOKEN_TTL_HOURS = _env_int("AUTH_TOKEN_TTL_HOURS", 168, min_value=1, max_value=24 * 30)
 EXPOSE_RESET_TOKENS = _env_bool("EXPOSE_RESET_TOKENS", False)
 SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
@@ -133,12 +145,13 @@ UPLOAD_SCAN_URL = os.getenv("UPLOAD_SCAN_URL", "").strip()
 UPLOAD_SCAN_TIMEOUT_SEC = _env_float("UPLOAD_SCAN_TIMEOUT_SEC", 5.0, min_value=1.0, max_value=30.0)
 MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 25, min_value=1, max_value=500)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-SERVE_STATIC = _env_bool("SERVE_STATIC", True)
+# H10: static serving and local media fallback are opt-in, never on by default.
+SERVE_STATIC = _env_bool("SERVE_STATIC", False)
 EXPOSE_HEALTH_DETAILS = _env_bool("EXPOSE_HEALTH_DETAILS", False)
 # Local-disk media fallback is for development only. Disable in production when R2 is unconfigured.
-ALLOW_LOCAL_MEDIA_FALLBACK = _env_bool("ALLOW_LOCAL_MEDIA_FALLBACK", True)
-REF_CACHE_MAX_FILES = _env_int("REF_CACHE_MAX_FILES", 128, min_value=8)
-REF_CACHE_MAX_AGE_HOURS = _env_int("REF_CACHE_MAX_AGE_HOURS", 72, min_value=1)
+ALLOW_LOCAL_MEDIA_FALLBACK = _env_bool("ALLOW_LOCAL_MEDIA_FALLBACK", False)
+REF_CACHE_MAX_FILES = _env_int("REF_CACHE_MAX_FILES", 128, min_value=8, max_value=100_000)
+REF_CACHE_MAX_AGE_HOURS = _env_int("REF_CACHE_MAX_AGE_HOURS", 72, min_value=1, max_value=24 * 365)
 APP_DB_PATH = os.getenv("APP_DB_PATH", str(BASE_DIR / "data" / "app.db"))
 
 # --- Memory guard -----------------------------------------------------------------
@@ -149,6 +162,14 @@ HEAVY_ENGINE_RAM_GB = _env_float("HEAVY_ENGINE_RAM_GB", 3.0, min_value=0.0)
 # --- CORS -------------------------------------------------------------------------
 # Exact origins go to allow_origins; wildcard subdomains go to allow_origin_regex
 # because Starlette does not expand "*" inside allow_origins.
+
+
+def _wildcard_origin_regex(origin: str) -> str:
+    """Turn `https://*.example.com` into a safe, anchored regex fragment (H11)."""
+    prefix, _, suffix = origin.partition("*")
+    return re.escape(prefix) + r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*" + re.escape(suffix)
+
+
 _raw_origins = [
     o.strip()
     for o in os.getenv(
@@ -167,7 +188,11 @@ if _cors_regex_env:
         logger.warning("Invalid CORS_ORIGIN_REGEX=%r (%s); falling back to localhost-only default", _cors_regex_env, e)
         CORS_ORIGIN_REGEX = _default_cors_regex
 else:
-    CORS_ORIGIN_REGEX = _default_cors_regex
+    _wildcard_parts = [_wildcard_origin_regex(o) for o in _raw_origins if "*" in o]
+    if _wildcard_parts:
+        CORS_ORIGIN_REGEX = "(?:" + "|".join([_default_cors_regex, *_wildcard_parts]) + ")"
+    else:
+        CORS_ORIGIN_REGEX = _default_cors_regex
 
 # --- Model flags ------------------------------------------------------------------
 ENABLE_KYUTAI = _env_bool("ENABLE_KYUTAI", True)
@@ -214,21 +239,21 @@ DEFAULT_INTRO_SEC = _env_float("DEFAULT_INTRO_SEC", 1.5, min_value=0.0)
 MAX_INTRO_SEC = _env_float("MAX_INTRO_SEC", 60.0, min_value=0.0)
 DEFAULT_OUTRO_SEC = _env_float("DEFAULT_OUTRO_SEC", 2.5, min_value=0.0)
 MAX_OUTRO_SEC = _env_float("MAX_OUTRO_SEC", 10.0, min_value=0.0)
-DEFAULT_WORDS_PER_CHUNK = _env_int("DEFAULT_WORDS_PER_CHUNK", 3, min_value=1)
-MAX_WORDS_PER_CHUNK = _env_int("MAX_WORDS_PER_CHUNK", 8, min_value=1)
+DEFAULT_WORDS_PER_CHUNK = _env_int("DEFAULT_WORDS_PER_CHUNK", 3, min_value=1, max_value=1000)
+MAX_WORDS_PER_CHUNK = _env_int("MAX_WORDS_PER_CHUNK", 8, min_value=1, max_value=1000)
 DEFAULT_TRIM_END_SEC = _env_float("DEFAULT_TRIM_END_SEC", 0.5, min_value=0.0)
 MAX_TRIM_END_SEC = _env_float("MAX_TRIM_END_SEC", 5.0, min_value=0.0)
 
 # --- Packaging --------------------------------------------------------------------
-DEFAULT_CLIP_LENGTH_SEC = _env_int("DEFAULT_CLIP_LENGTH_SEC", 40, min_value=1)
-MIN_CLIP_LENGTH_SEC = _env_int("MIN_CLIP_LENGTH_SEC", 5, min_value=1)
-MAX_CLIP_LENGTH_SEC = _env_int("MAX_CLIP_LENGTH_SEC", 180, min_value=1)
+DEFAULT_CLIP_LENGTH_SEC = _env_int("DEFAULT_CLIP_LENGTH_SEC", 40, min_value=1, max_value=86_400)
+MIN_CLIP_LENGTH_SEC = _env_int("MIN_CLIP_LENGTH_SEC", 5, min_value=1, max_value=86_400)
+MAX_CLIP_LENGTH_SEC = _env_int("MAX_CLIP_LENGTH_SEC", 180, min_value=1, max_value=86_400)
 
 # --- Social-ready video export defaults ------------------------------------------
 # Balanced for YouTube / Instagram / Facebook after platform re-compression.
 SOCIAL_VIDEO_CRF = _env_int("SOCIAL_VIDEO_CRF", 22, min_value=0, max_value=51)
 SOCIAL_VIDEO_PRESET = os.getenv("SOCIAL_VIDEO_PRESET", "veryfast")
 SOCIAL_AUDIO_BITRATE = os.getenv("SOCIAL_AUDIO_BITRATE", "160k")
-SOCIAL_AUDIO_RATE = _env_int("SOCIAL_AUDIO_RATE", 44100, min_value=8000)
+SOCIAL_AUDIO_RATE = _env_int("SOCIAL_AUDIO_RATE", 44100, min_value=8000, max_value=192_000)
 SOCIAL_MAXRATE = os.getenv("SOCIAL_MAXRATE", "12M")
 SOCIAL_BUFSIZE = os.getenv("SOCIAL_BUFSIZE", "24M")

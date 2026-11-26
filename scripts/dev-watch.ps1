@@ -17,7 +17,8 @@ param(
     [switch]$Status
 )
 
-$ErrorActionPreference = "SilentlyContinue"
+# M46: surface start/config errors instead of continuing with half-started servers.
+$ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $backendDir = Join-Path $root "backend"
@@ -54,24 +55,38 @@ function Stop-PortProcess([int]$port) {
 
 function Start-Backend {
     $python = (Get-Command python -ErrorAction SilentlyContinue).Source
-    if (-not $python) { Write-WatchLog "python not found on PATH"; return }
-    Start-Process -FilePath $python `
+    if (-not $python) {
+        Write-WatchLog "python not found on PATH"
+        throw "python not found on PATH"
+    }
+    $proc = Start-Process -FilePath $python `
         -ArgumentList @("-m", "uvicorn", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000") `
         -WorkingDirectory $backendDir `
         -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr `
-        -WindowStyle Hidden | Out-Null
-    Write-WatchLog "backend started"
+        -WindowStyle Hidden -PassThru
+    if (-not $proc) {
+        Write-WatchLog "failed to start backend"
+        throw "failed to start backend"
+    }
+    Write-WatchLog "backend started pid=$($proc.Id)"
 }
 
 function Start-Frontend {
     $npm = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
-    if (-not $npm) { Write-WatchLog "npm.cmd not found on PATH"; return }
-    Start-Process -FilePath $npm `
+    if (-not $npm) {
+        Write-WatchLog "npm.cmd not found on PATH"
+        throw "npm.cmd not found on PATH"
+    }
+    $proc = Start-Process -FilePath $npm `
         -ArgumentList @("run", "dev") `
         -WorkingDirectory $frontendDir `
         -RedirectStandardOutput $frontendOut -RedirectStandardError $frontendErr `
-        -WindowStyle Hidden | Out-Null
-    Write-WatchLog "frontend started"
+        -WindowStyle Hidden -PassThru
+    if (-not $proc) {
+        Write-WatchLog "failed to start frontend"
+        throw "failed to start frontend"
+    }
+    Write-WatchLog "frontend started pid=$($proc.Id)"
 }
 
 # Signature of files that require a full restart when changed.
@@ -106,18 +121,23 @@ if (-not $Force -and (Test-Path $lockPath)) {
 }
 Set-Content -Path $lockPath -Value (Get-Date -Format o)
 
-$restart = $Force -or ($previous -and $previous -ne $signature)
-if ($restart) {
-    Write-WatchLog "restart triggered (force=$Force, configChanged=$([bool]($previous -and $previous -ne $signature)))"
-    Stop-PortProcess 8000
-    Stop-PortProcess 3000
-    Start-Backend
-    Start-Frontend
-} else {
-    $bePid = Get-PortOwner 8000
-    $fePid = Get-PortOwner 3000
-    if ($bePid -eq 0) { Write-WatchLog "backend down; starting"; Start-Backend }
-    if ($fePid -eq 0) { Write-WatchLog "frontend down; starting"; Start-Frontend }
-}
+# M46: always release the lock, even if a start/restart step throws.
+try {
+    $restart = $Force -or ($previous -and $previous -ne $signature)
+    if ($restart) {
+        Write-WatchLog "restart triggered (force=$Force, configChanged=$([bool]($previous -and $previous -ne $signature)))"
+        Stop-PortProcess 8000
+        Stop-PortProcess 3000
+        Start-Backend
+        Start-Frontend
+    } else {
+        $bePid = Get-PortOwner 8000
+        $fePid = Get-PortOwner 3000
+        if ($bePid -eq 0) { Write-WatchLog "backend down; starting"; Start-Backend }
+        if ($fePid -eq 0) { Write-WatchLog "frontend down; starting"; Start-Frontend }
+    }
 
-Set-Content -Path $statePath -Value $signature
+    Set-Content -Path $statePath -Value $signature
+} finally {
+    Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+}

@@ -380,9 +380,11 @@ def get_duration(path: str) -> float:
             out = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", path],
-                capture_output=True, text=True, check=True,
+                capture_output=True, text=True, check=True, timeout=15,
             )
             return float(out.stdout.strip())
+        except subprocess.TimeoutExpired:
+            logger.warning("ffprobe timed out; falling back to WAV header")
         except Exception as e:
             logger.warning("ffprobe failed for %s: %s; falling back to WAV header", path, e)
     # Fallback: read wav header
@@ -552,16 +554,16 @@ def stitch_audio_with_pauses(
         return output_path
 
     rate, first = wavfile.read(chunks[0])
-    arrays = [np.asarray(first)]
+    # Normalize every chunk to mono int16 so a mix of 1-D/2-D or float/int
+    # WAVs cannot blow up np.concatenate (M24).
+    arrays = [_to_mono_s16(np.asarray(first))]
     for i, c in enumerate(chunks[1:]):
-        _, data = wavfile.read(c)
-        data = np.asarray(data)
-        if data.dtype != first.dtype:
-            data = data.astype(first.dtype)
-        if data.ndim != first.ndim:
-            data = data.reshape(-1) if first.ndim == 1 else data
+        chunk_rate, data = wavfile.read(c)
+        data = _to_mono_s16(np.asarray(data))
+        if int(chunk_rate) != int(rate):
+            data = _to_mono_s16(_resample(data.astype(np.float32), int(chunk_rate), int(rate)))
         this_pause = gaps_ms[i] if gaps_ms and i < len(gaps_ms) else pause_ms
-        gap = np.zeros(int(rate * this_pause / 1000.0), dtype=first.dtype)
+        gap = np.zeros(int(rate * this_pause / 1000.0), dtype=np.int16)
         arrays.append(gap)
         arrays.append(data)
     wavfile.write(output_path, rate, np.concatenate(arrays))
@@ -595,10 +597,13 @@ def stitch_voice_with_crossfades(
         inputs.extend(["-i", chunk])
         if idx < len(voice_chunks) - 1:
             filter_parts.append(
-                f"[{idx}:a]aresample=24000,apad=pad_dur={pause_ms / 1000.0}[a{idx}];"
+                f"[{idx}:a]aresample=24000,aformat=channel_layouts=stereo,"
+                f"apad=pad_dur={pause_ms / 1000.0}[a{idx}];"
             )
         else:
-            filter_parts.append(f"[{idx}:a]aresample=24000[a{idx}];")
+            filter_parts.append(
+                f"[{idx}:a]aresample=24000,aformat=channel_layouts=stereo[a{idx}];"
+            )
 
     prev_label = "a0"
     for idx in range(1, len(voice_chunks)):
@@ -622,7 +627,10 @@ def stitch_voice_with_crossfades(
     return output_path
 
 
-SFX_KINDS = ("whoosh", "pop", "chime", "click", "applause")
+SFX_KINDS = ("whoosh", "pop", "chime", "click", "applause", "lift")
+# The transition UI calls the rising swell "lift"; the local FFmpeg generator
+# calls the same effect "chime" (M18).
+SFX_ALIASES = {"lift": "chime"}
 
 
 def generate_sfx(kind: str, output_path: str, duration_sec: float | None = None) -> str:
@@ -630,6 +638,7 @@ def generate_sfx(kind: str, output_path: str, duration_sec: float | None = None)
     if not _ffmpeg_available():
         raise RuntimeError("FFmpeg required for SFX generation")
     kind = str(kind or "").strip().lower()
+    kind = SFX_ALIASES.get(kind, kind)
     if kind not in SFX_KINDS:
         raise ValueError(f"kind must be one of: {', '.join(SFX_KINDS)}")
 

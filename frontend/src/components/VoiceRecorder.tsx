@@ -141,6 +141,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
             return;
           }
           const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+          if (!mountedRef.current) return;
           const ext = extensionForType(blob.type);
           setPreviewExt(ext);
           setPreview(URL.createObjectURL(blob));
@@ -239,6 +240,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
     } catch {
       // Duration detection is advisory; allow upload to proceed.
     }
+    if (!mountedRef.current) return;
     const ct = file.type || "audio/wav";
     const ext = extensionForType(ct, file.name);
     setPreviewExt(ext);

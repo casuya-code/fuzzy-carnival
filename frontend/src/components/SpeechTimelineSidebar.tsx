@@ -24,14 +24,24 @@ function fmtTime(sec: number) {
   return `${m}:${r.toFixed(2).padStart(5, "0")}`;
 }
 
-function renumber(segments: Omit<TimelineSegment, "id">[]): TimelineSegment[] {
-  return segments.map((s, i) => ({
-    ...s,
-    id: i + 1,
-    start: Number(s.start.toFixed(3)),
-    end: Number(s.end.toFixed(3)),
-    duration: Number(Math.max(0, s.end - s.start).toFixed(3)),
-  }));
+/** Keep existing segment IDs stable; new segments get an ID above the current max. */
+function withStableIds(segments: Array<Omit<TimelineSegment, "id"> & { id?: number }>): TimelineSegment[] {
+  const used = new Set<number>();
+  let nextId = segments.reduce((max, s) => Math.max(max, Number(s.id) || 0), 0) + 1;
+  return segments.map((s) => {
+    const candidate = Number(s.id);
+    const id = Number.isInteger(candidate) && candidate > 0 && !used.has(candidate)
+      ? candidate
+      : nextId++;
+    used.add(id);
+    return {
+      ...s,
+      id,
+      start: Number(s.start.toFixed(3)),
+      end: Number(s.end.toFixed(3)),
+      duration: Number(Math.max(0, s.end - s.start).toFixed(3)),
+    };
+  });
 }
 
 function promptIdea(text: string) {
@@ -60,6 +70,8 @@ export default function SpeechTimelineSidebar({
   const [showScript, setShowScript] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadedSrcRef = useRef<string | null>(null);
+  const pendingSeekRef = useRef<(() => void) | null>(null);
 
   // Only reset local state for a different take. initialTimeline/sourceText are
   // starting values — editing a timeline updates them via onTimelineChange, and
@@ -80,6 +92,7 @@ export default function SpeechTimelineSidebar({
   useEffect(() => {
     return () => {
       if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+      pendingSeekRef.current?.();
     };
   }, []);
 
@@ -89,6 +102,7 @@ export default function SpeechTimelineSidebar({
   }, [segments]);
 
   const stopPlayback = () => {
+    pendingSeekRef.current?.();
     if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
     stopTimerRef.current = null;
     audioRef.current?.pause();
@@ -101,22 +115,54 @@ export default function SpeechTimelineSidebar({
       stopPlayback();
       return;
     }
-    if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+    stopPlayback();
     const a = audioRef.current;
-    a.src = audioUrl;
-    a.currentTime = Math.max(0, seg.start);
-    const playPromise = a.play();
-    setPlayingId(seg.id);
-    const ms = Math.max(150, (seg.end - seg.start) * 1000);
-    stopTimerRef.current = setTimeout(() => {
-      a.pause();
+    const startAt = () => {
+      try { a.currentTime = Math.max(0, seg.start); } catch { /* metadata not seekable */ }
+      const playPromise = a.play();
+      setPlayingId(seg.id);
+      const ms = Math.max(150, (seg.end - seg.start) * 1000);
+      if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+      stopTimerRef.current = setTimeout(() => {
+        a.pause();
+        setPlayingId((cur) => (cur === seg.id ? null : cur));
+        stopTimerRef.current = null;
+      }, ms);
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {
+          if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+          stopTimerRef.current = null;
+          setPlayingId((cur) => (cur === seg.id ? null : cur));
+        });
+      }
+    };
+
+    // Seeking before loadedmetadata is a no-op in most browsers. Wait for the
+    // event on a fresh src, or seek immediately when this src is already loaded.
+    if (loadedSrcRef.current === audioUrl && a.readyState >= 1) {
+      startAt();
+      return;
+    }
+    const cleanup = () => {
+      a.removeEventListener("loadedmetadata", onLoaded);
+      a.removeEventListener("error", onError);
+      if (pendingSeekRef.current === cleanup) pendingSeekRef.current = null;
+    };
+    const onLoaded = () => {
+      cleanup();
+      loadedSrcRef.current = audioUrl;
+      startAt();
+    };
+    const onError = () => {
+      cleanup();
       setPlayingId(null);
-      stopTimerRef.current = null;
-    }, ms);
-    if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch(() => {
-        setPlayingId(null);
-      });
+    };
+    pendingSeekRef.current = cleanup;
+    a.addEventListener("loadedmetadata", onLoaded);
+    a.addEventListener("error", onError);
+    if (a.src !== audioUrl) {
+      a.src = audioUrl;
+      a.load();
     }
   };
 
@@ -138,7 +184,7 @@ export default function SpeechTimelineSidebar({
         text,
         prefer_alignment: true,
       });
-      const next = (res.timeline || []) as TimelineSegment[];
+      const next = withStableIds((res.timeline || []) as TimelineSegment[]);
       setSegments(next);
       setSource(res.timeline_source || "estimated");
       setWarning(res.warning || null);
@@ -159,14 +205,13 @@ export default function SpeechTimelineSidebar({
     const a = segments[idx];
     const b = segments[idx + 1];
     const merged = {
-      start: a.start,
+      ...a,
       end: b.end,
       duration: b.end - a.start,
       text: `${a.text} ${b.text}`.replace(/\s+/g, " ").trim(),
     };
-    const before = segments.slice(0, idx).map(({ id: _id, ...rest }) => rest);
-    const after = segments.slice(idx + 2).map(({ id: _id, ...rest }) => rest);
-    updateSegments(renumber([...before, merged, ...after]), "edited");
+    // Keep the first segment's id so prompts and references stay attached.
+    updateSegments(withStableIds([...segments.slice(0, idx), merged, ...segments.slice(idx + 2)]), "edited");
   };
 
   const splitSegment = (idx: number) => {
@@ -178,12 +223,12 @@ export default function SpeechTimelineSidebar({
     const leftText = words.slice(0, mid).join(" ");
     const rightText = words.slice(mid).join(" ");
     const ratio = leftText.length / Math.max(1, seg.text.length);
-    const midTime = clamp(seg.start + (seg.end - seg.start) * ratio, seg.start + 0.05, seg.end - 0.05);
-    const left = { start: seg.start, end: midTime, duration: midTime - seg.start, text: leftText };
+    const pad = Math.min(0.05, (seg.end - seg.start) / 4);
+    const midTime = clamp(seg.start + (seg.end - seg.start) * ratio, seg.start + pad, seg.end - pad);
+    const left = { ...seg, end: midTime, duration: midTime - seg.start, text: leftText };
+    // The new right half gets a fresh id above the current maximum.
     const right = { start: midTime, end: seg.end, duration: seg.end - midTime, text: rightText };
-    const before = segments.slice(0, idx).map(({ id: _id, ...rest }) => rest);
-    const after = segments.slice(idx + 1).map(({ id: _id, ...rest }) => rest);
-    updateSegments(renumber([...before, left, right, ...after]), "edited");
+    updateSegments(withStableIds([...segments.slice(0, idx), left, right, ...segments.slice(idx + 1)]), "edited");
   };
 
   const copyJson = async () => {
@@ -201,7 +246,8 @@ export default function SpeechTimelineSidebar({
     a.href = url;
     a.download = "speech-timeline.json";
     a.click();
-    URL.revokeObjectURL(url);
+    // Give the browser a task cycle to start the download before releasing the URL.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const fillPromptIdeas = () => {
@@ -249,7 +295,12 @@ export default function SpeechTimelineSidebar({
 
       {open && (
         <div className="border-t p-4 space-y-3">
-          <audio ref={audioRef} className="hidden" onEnded={() => setPlayingId(null)} />
+          <audio
+            ref={audioRef}
+            className="hidden"
+            onLoadedMetadata={() => { loadedSrcRef.current = audioUrl || null; }}
+            onEnded={() => setPlayingId(null)}
+          />
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-gray-700 font-medium">{sourceLabel} <InfoTip text="How the timings were produced." label="Timing source" /></span>
@@ -302,7 +353,7 @@ export default function SpeechTimelineSidebar({
           {segments.length > 0 ? (
             <div className="space-y-2 max-h-[70vh] overflow-auto pr-1">
               {segments.map((seg, idx) => (
-                <div key={`${seg.id}-${seg.start}-${idx}`} className="rounded-lg border p-2.5 space-y-2">
+                <div key={seg.id} className="rounded-lg border p-2.5 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <button
                       type="button"

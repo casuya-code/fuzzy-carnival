@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+import contextvars
 import os
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+
+# Ownership is bound by the router before acquiring a render slot. Keeping it
+# in a contextvar preserves the zero-argument acquire_slot() call used by
+# existing callers/tests while letting the store use per-owner semaphores.
+_CURRENT_OWNER: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "video_job_owner", default="@anonymous"
+)
+
+TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+
+
+def bind_job_owner(owner: str):
+    return _CURRENT_OWNER.set(owner or "@anonymous")
+
+
+def clear_job_owner(token) -> None:
+    _CURRENT_OWNER.reset(token)
 
 
 @dataclass
@@ -24,6 +43,7 @@ class VideoJob:
     result: dict[str, Any] | None = None
     error: str | None = None
     error_status: int | None = None
+    finished: bool = False
 
     def snapshot(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -51,15 +71,26 @@ class VideoJobStore:
         self._jobs: dict[str, VideoJob] = {}
         self._lock = threading.RLock()
         limit = max(1, int(os.getenv("VIDEO_JOB_MAX_CONCURRENT", "2")))
-        self._slots = threading.BoundedSemaphore(limit)
+        self._slots: dict[str, threading.BoundedSemaphore] = {}
+        self._slots_lock = threading.Lock()
         self.max_concurrent = limit
 
-    def acquire_slot(self) -> bool:
-        return self._slots.acquire(blocking=False)
+    def _slot_for(self, owner: str) -> threading.BoundedSemaphore:
+        with self._slots_lock:
+            slot = self._slots.get(owner)
+            if slot is None:
+                slot = threading.BoundedSemaphore(self.max_concurrent)
+                self._slots[owner] = slot
+            return slot
 
-    def release_slot(self) -> None:
+    def acquire_slot(self, owner: str | None = None) -> bool:
+        owner = owner or _CURRENT_OWNER.get()
+        return self._slot_for(owner).acquire(blocking=False)
+
+    def release_slot(self, owner: str | None = None) -> None:
+        owner = owner or _CURRENT_OWNER.get()
         try:
-            self._slots.release()
+            self._slot_for(owner).release()
         except ValueError:
             pass
 
@@ -81,6 +112,10 @@ class VideoJobStore:
 
     def update(self, job: VideoJob, *, status: str | None = None, progress: float | None = None, stage: str | None = None) -> None:
         with self._lock:
+            # A terminal status is authoritative: a late progress report from a
+            # cancelled render must never resurrect it as "running".
+            if job.finished or job.status in TERMINAL_STATUSES:
+                return
             if status is not None:
                 job.status = status
             if progress is not None:
@@ -99,17 +134,24 @@ class VideoJobStore:
         error_status: int | None = None,
     ) -> None:
         with self._lock:
-            job.status = status
-            job.result = result
+            if job.finished:
+                # The first finish already published the result and released the slot.
+                return
+            job.finished = True
+            # Cancellation wins even if the render thread finished a split second
+            # after the client cancelled (or finish() was called with "succeeded").
+            effective = "cancelled" if job.cancel_event.is_set() else status
+            job.status = effective
+            job.result = result if effective == "succeeded" else None
             job.error = error
             job.error_status = error_status
-            job.progress = 100.0 if status == "succeeded" else job.progress
+            job.progress = 100.0 if effective == "succeeded" else job.progress
             job.updated_at = time.time()
-        self.release_slot()
+        self.release_slot(job.owner)
 
     def cancel(self, job: VideoJob) -> bool:
         with self._lock:
-            if job.status in ("succeeded", "failed", "cancelled"):
+            if job.finished or job.status in TERMINAL_STATUSES:
                 return False
             job.cancel_event.set()
             job.status = "cancelled"

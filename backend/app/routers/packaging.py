@@ -1,3 +1,4 @@
+import math
 import shutil
 import subprocess
 import uuid
@@ -20,7 +21,8 @@ from app.services.packaging_processor import (
     generate_viral_thumbnail,
     reexport_master_video,
 )
-from app.services.r2_storage import download_reference, upload_output
+from app.services.r2_storage import delete_object, download_reference, upload_output
+from app.services.upload_validation import copy_upload_capped, resolve_brand_font_path
 from app.services.text_styles import normalize_lower_third, normalize_text_style
 from app.auth import require_api_key
 from app.rate_limit import rate_limit
@@ -31,11 +33,27 @@ DEFAULT_STARTS = [0, 45, 90]
 DEFAULT_PHASES = ["THE HOOK", "THE CLIMAX", "THE REVEAL"]
 
 
+def _lower_third_or_400(raw):
+    try:
+        return normalize_lower_third(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _font_path_or_400(raw):
+    try:
+        return resolve_brand_font_path(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def _parse_csv_float(value: Optional[str], fallback: list[float]) -> list[float]:
     if not value:
         return fallback
     try:
         parts = [float(x.strip()) for x in value.split(",") if x.strip()]
+        # Reject NaN/Infinity and negative positions (M29).
+        parts = [p for p in parts if math.isfinite(p) and p >= 0]
         return parts[:3] or fallback
     except Exception:
         return fallback
@@ -114,10 +132,12 @@ def _resolve_master(
 ) -> str:
     dest = work_dir / "master.mp4"
     if master_video is not None:
-        with open(dest, "wb") as f:
-            shutil.copyfileobj(master_video.file, f)
+        copy_upload_capped(master_video, dest)
         return str(dest)
-    return download_reference(master_r2_key, dest=dest)  # type: ignore[arg-type]
+    try:
+        return download_reference(master_r2_key, dest=dest)  # type: ignore[arg-type]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail="Master video key not found") from exc
 
 
 @router.post("/thumbnail")
@@ -146,6 +166,7 @@ async def packaging_thumbnail(
     work_dir.mkdir(parents=True, exist_ok=True)
     try:
         style = normalize_text_style(text_style)
+        font_path = _font_path_or_400(font_path)
         master = _resolve_master(master_video, master_r2_key, work_dir)
         thumb = str(work_dir / "youtube_thumbnail.jpg")
         generate_viral_thumbnail(
@@ -176,6 +197,8 @@ async def packaging_thumbnail(
     except subprocess.CalledProcessError as e:
         err = (e.stderr or b"").decode("utf-8", errors="ignore") if isinstance(e.stderr, (bytes, bytearray)) else str(e)
         raise HTTPException(status_code=500, detail=f"Thumbnail failed: {err[-500:]}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail="Source media key not found") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Thumbnail failed: {e}")
     finally:
@@ -213,9 +236,12 @@ async def packaging_publish(
     job_id = uuid.uuid4().hex
     work_dir = TEMP_AUDIO_DIR / "packaging_jobs" / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
+    published = False
+    uploaded_keys: list[str] = []
     try:
         style = normalize_text_style(text_style)
-        lower = normalize_lower_third(lower_third)
+        lower = _lower_third_or_400(lower_third)
+        font_path = _font_path_or_400(font_path)
         master = _resolve_master(master_video, master_r2_key, work_dir)
 
         # Optional social export pass for the master (YouTube 2K upscale / loudness normalization)
@@ -239,26 +265,21 @@ async def packaging_publish(
 
         # 2) Three hook-driven vertical Shorts
         master_duration = max(0.0, float(get_duration(export_master) or 0.0))
+        if master_duration <= 0:
+            raise HTTPException(status_code=400, detail="Master video has no readable duration")
         requested_starts = _parse_csv_float(start_times, DEFAULT_STARTS)
         phase_names = _parse_csv_str(phases, DEFAULT_PHASES)
         clip_length_sec = int(max(MIN_CLIP_LENGTH_SEC, min(MAX_CLIP_LENGTH_SEC, clip_length_sec)))
-        if master_duration > 0:
-            clip_length_sec = max(1, min(clip_length_sec, int(master_duration) if master_duration >= 1 else 1))
-            clip_length_sec = min(clip_length_sec, max(1, int(master_duration)))
-            # Keep clip within master; allow short masters below MIN_CLIP_LENGTH_SEC.
-            if master_duration < clip_length_sec:
-                clip_length_sec = max(1, int(master_duration))
+        clip_length_sec = max(1, min(clip_length_sec, int(master_duration)))
+        if master_duration < 3 * clip_length_sec:
+            # Short master: spread the hooks across the timeline instead of
+            # producing three identical Shorts at start 0 (M28).
+            starts = [round(master_duration * i / 3.0, 3) for i in range(3)]
+        else:
             max_start = max(0.0, master_duration - float(clip_length_sec))
-            starts = []
-            for s in requested_starts[:3]:
-                ss = max(0.0, min(float(s), max_start))
-                starts.append(round(ss, 3))
+            starts = [round(max(0.0, min(float(s), max_start)), 3) for s in requested_starts[:3]]
             while len(starts) < 3:
                 starts.append(round(max_start, 3))
-        else:
-            starts = [max(0.0, float(s)) for s in requested_starts[:3]] or DEFAULT_STARTS[:]
-            while len(starts) < 3:
-                starts.append(starts[-1])
 
         shorts_dir = work_dir / "shorts"
         short_paths = export_three_vertical_shorts(
@@ -279,14 +300,17 @@ async def packaging_publish(
         master_label = _master_label(master_dims)
         master_key = build_video_r2_key(master_label, language, topic, "mp4", date_str, time_str)
         master_url = upload_output(export_master, master_key)
+        uploaded_keys.append(master_key)
 
         thumb_key = build_video_r2_key("Thumb_1280x720", language, topic, "jpg", date_str, time_str)
         thumb_url = upload_output(thumb, thumb_key)
+        uploaded_keys.append(thumb_key)
 
         uploaded_shorts = []
         for i, (path, start) in enumerate(zip(short_paths, starts[:len(short_paths)]), start=1):
             key = build_video_r2_key(f"Video_Short9x16_P{i}", language, topic, "mp4", date_str, time_str)
             url = upload_output(path, key)
+            uploaded_keys.append(key)
             uploaded_shorts.append({
                 "part": i,
                 "r2_key": key,
@@ -297,6 +321,7 @@ async def packaging_publish(
             })
 
         master_w, master_h = master_dims if master_dims else (None, None)
+        published = True
         return {
             "package_id": job_id,
             "master": {
@@ -327,7 +352,13 @@ async def packaging_publish(
     except subprocess.CalledProcessError as e:
         err = (e.stderr or b"").decode("utf-8", errors="ignore") if isinstance(e.stderr, (bytes, bytearray)) else str(e)
         raise HTTPException(status_code=500, detail=f"Packaging failed: {err[-500:]}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=404, detail="Source media key not found") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Packaging failed: {e}")
     finally:
+        if not published:
+            # Roll back partial publishes (M37); delete_object is best-effort.
+            for key in uploaded_keys:
+                delete_object(key)
         shutil.rmtree(work_dir, ignore_errors=True)

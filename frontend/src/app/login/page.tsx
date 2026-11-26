@@ -5,11 +5,23 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 
+/** Only allow same-origin absolute paths (never protocol-relative or backslash tricks). */
+function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) return "/";
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/")) return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
 function LoginInner() {
   const { user, loading, login } = useAuth();
   const router = useRouter();
   const sp = useSearchParams();
-  const next = sp.get("next") || "/";
+  const next = safeNext(sp.get("next"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +86,7 @@ function LoginInner() {
           <Link href="/reset-password" className="text-blue-600 hover:underline">Forgot password?</Link>
           <span>
             No account?{" "}
-            <Link href="/signup" className="text-blue-600 hover:underline">Create one</Link>
+            <Link href={`/signup?next=${encodeURIComponent(next)}`} className="text-blue-600 hover:underline">Create one</Link>
           </span>
         </div>
       </div>

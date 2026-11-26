@@ -9,6 +9,9 @@ const bucketName = process.env.R2_BUCKET_NAME || "voice-clone-audio";
 /** Single source of truth for whether direct R2 uploads are available. */
 export const r2Configured = Boolean(accountId && accessKeyId && secretAccessKey);
 
+/** Maximum accepted size for a single reference/media upload. */
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
 const r2Client = new S3Client({
   region: "auto",
   endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
@@ -25,15 +28,20 @@ const r2Client = new S3Client({
 export async function createPresignedUploadUrl(
   key: string,
   contentType: string,
-  contentLength?: number
+  contentLength: number
 ) {
+  if (
+    !Number.isInteger(contentLength) ||
+    contentLength <= 0 ||
+    contentLength > MAX_UPLOAD_BYTES
+  ) {
+    throw new Error("Invalid content length");
+  }
   const command = new PutObjectCommand({
     Bucket: bucketName,
     Key: key,
     ContentType: contentType,
-    ...(typeof contentLength === "number" && contentLength > 0
-      ? { ContentLength: contentLength }
-      : {}),
+    ContentLength: contentLength,
   });
   const url = await getSignedUrl(r2Client, command, { expiresIn: 300 });
   return url;

@@ -24,6 +24,7 @@ class JobCancelled(Exception):
 class JobContext:
     cancel_event: threading.Event
     progress: Callable[[str, float], None]
+    kind: str | None = None
     last_report: dict[str, Any] | None = None
 
 
@@ -55,14 +56,15 @@ def report_progress(stage: str, pct: float) -> None:
     if ctx is None:
         return
     now = __import__("time").perf_counter()
+    kind = ctx.kind
     if ctx.last_report is not None:
         record(
             "video.stage",
             (now - ctx.last_report["t"]) * 1000,
             stage=ctx.last_report["stage"],
-            kind=ctx.last_report.get("kind"),
+            kind=ctx.last_report.get("kind") or kind,
         )
-    ctx.last_report = {"t": now, "stage": stage, "kind": ctx.last_report.get("kind") if ctx.last_report else None}
+    ctx.last_report = {"t": now, "stage": stage, "kind": kind}
     ctx.progress(stage, min(100.0, max(0.0, float(pct))))
 
 
@@ -77,19 +79,29 @@ def run_ffmpeg(
         )
     check_cancelled()
     proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    while True:
-        try:
-            out, err = proc.communicate(timeout=0.25)
-            break
-        except subprocess.TimeoutExpired:
-            if ctx.cancel_event.is_set():
-                proc.terminate()
-                try:
-                    out, err = proc.communicate(timeout=2)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    out, err = proc.communicate()
-                raise JobCancelled()
+    try:
+        while True:
+            try:
+                out, err = proc.communicate(timeout=0.25)
+                break
+            except subprocess.TimeoutExpired:
+                if ctx.cancel_event.is_set():
+                    raise JobCancelled()
+    except BaseException:
+        # Never leave an orphaned encoder behind, even for unexpected errors.
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+        else:
+            try:
+                proc.communicate(timeout=1)
+            except Exception:
+                pass
+        raise
     if check and proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, cmd, output=out, stderr=err)
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)

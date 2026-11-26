@@ -1,13 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 
-export default function SignupPage() {
+/** Only allow same-origin absolute paths for the post-signup redirect. */
+function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) return "/";
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/")) return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
+function SignupInner() {
   const { user, loading, signup } = useAuth();
   const router = useRouter();
+  const next = safeNext(useSearchParams().get("next"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -15,8 +28,8 @@ export default function SignupPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!loading && user) router.replace("/");
-  }, [loading, user, router]);
+    if (!loading && user) router.replace(next);
+  }, [loading, user, router, next]);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -28,7 +41,7 @@ export default function SignupPage() {
     setSubmitting(true);
     try {
       await signup(email, password);
-      router.replace("/");
+      router.replace(next);
     } catch (err: any) {
       setError(err?.message || "Signup failed");
     } finally {
@@ -88,11 +101,15 @@ export default function SignupPage() {
         </form>
         <p className="mt-4 text-sm text-gray-600">
           Already have an account?{" "}
-          <Link href="/login" className="text-blue-600 hover:underline">
+          <Link href={`/login?next=${encodeURIComponent(next)}`} className="text-blue-600 hover:underline">
             Log in
           </Link>
         </p>
       </div>
     </div>
   );
+}
+
+export default function SignupPage() {
+  return <Suspense fallback={<div className="p-6 text-sm text-gray-600">Loading...</div>}><SignupInner /></Suspense>;
 }

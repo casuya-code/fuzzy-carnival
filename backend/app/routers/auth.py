@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import EXPOSE_RESET_TOKENS
 from app.rate_limit import rate_limit
-from app.services.mailer import send_password_reset_email
+from app.services.mailer import send_password_reset_email, smtp_configured
+
+logger = logging.getLogger(__name__)
 from app.services.user_store import (
     authenticate_user,
     bump_token_version,
@@ -55,7 +59,8 @@ class PasswordResetConfirm(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     name: str | None = Field(default=None, max_length=80)
     phone: str | None = Field(default=None, max_length=32)
-    avatar: str | None = Field(default=None, max_length=1_400_000)
+    # M13: ~300 KB of raw image is ~400,100 base64 chars; reject earlier.
+    avatar: str | None = Field(default=None, max_length=400_100)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -103,7 +108,9 @@ def login(req: AuthRequest):
     try:
         user = authenticate_user(str(req.email), req.password)
     except ValueError as e:
-        raise HTTPException(status_code=429, detail=str(e)) from e
+        # M12: lockout must not reveal account state via a different status/body.
+        logger.warning("Login rejected (%s)", type(e).__name__)
+        raise HTTPException(status_code=401, detail="Invalid email or password") from e
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user)
@@ -142,11 +149,19 @@ def logout_all(user: dict = Depends(_current_user)):
 
 @router.post("/password-reset/request")
 def password_reset_request(req: PasswordResetRequest):
+    # M11: without a delivery channel (and without explicit dev-mode exposure),
+    # a "success" response would strand the user with an unusable reset flow.
+    if not EXPOSE_RESET_TOKENS and not smtp_configured():
+        raise HTTPException(status_code=503, detail="Password reset delivery is not configured")
+
     result = create_password_reset(str(req.email))
     # Avoid account enumeration. Return token only in explicitly enabled dev mode.
     resp = {"ok": True, "message": "If the account exists, a password reset token was created."}
     if result:
-        send_password_reset_email(result["email"], result["reset_token"])
+        delivered = send_password_reset_email(result["email"], result["reset_token"])
+        if not delivered and not EXPOSE_RESET_TOKENS:
+            logger.warning("Password reset email delivery failed")
+            raise HTTPException(status_code=503, detail="Password reset email could not be delivered")
         if EXPOSE_RESET_TOKENS:
             resp["reset_token"] = result["reset_token"]
             resp["expires_in_sec"] = result["expires_in_sec"]

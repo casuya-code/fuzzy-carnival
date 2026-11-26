@@ -288,13 +288,13 @@ function SpeechAndBackgroundPageInner() {
 
   const presetId = searchParams.get("preset");
 
-  const presetApplied = useRef(false);
+  const appliedPresetId = useRef<string | null>(null);
 
 
 
   useEffect(() => {
 
-    if (!presetId || presetApplied.current) return;
+    if (!presetId || appliedPresetId.current === presetId) return;
 
     const item = getDeliverableById(presetId);
 
@@ -302,7 +302,7 @@ function SpeechAndBackgroundPageInner() {
 
     if (!s) return;
 
-    presetApplied.current = true;
+    appliedPresetId.current = presetId;
 
     if (typeof s.music_volume === "number") setMusicVolume(s.music_volume);
 
@@ -624,7 +624,7 @@ function SpeechAndBackgroundPageInner() {
 
     // backend resolves either kind of key when mixing.
 
-    const { upload_url, key } = await requestUploadUrl(`${track.id}.${ext}`, contentType);
+    const { upload_url, key } = await requestUploadUrl(`${track.id}.${ext}`, contentType, track.blob.size);
 
     await uploadToR2(upload_url, track.blob, contentType);
 

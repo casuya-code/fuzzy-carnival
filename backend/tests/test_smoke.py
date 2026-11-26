@@ -5,15 +5,12 @@ import shutil
 
 import pytest
 
-try:
-    from fastapi.testclient import TestClient
-    from app.main import app
-    client = TestClient(app)
-    _IMPORT_OK = True
-except Exception as e:  # pragma: no cover - environment-dependent
-    client = None
-    _IMPORT_OK = False
-    _IMPORT_ERR = e
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+# H13: no blanket import skip; CI gates on a real import before running tests.
+client = TestClient(app)
 
 
 @pytest.fixture()
@@ -28,12 +25,6 @@ def auth_headers(tmp_path, monkeypatch):
 
 def _ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
-
-
-@pytest.fixture(autouse=True)
-def _require_import():
-    if not _IMPORT_OK:
-        pytest.skip(f"App import unavailable in this environment: {_IMPORT_ERR}")
 
 
 def test_health():

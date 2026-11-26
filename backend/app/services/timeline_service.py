@@ -102,15 +102,39 @@ def group_words_into_segments(
     return segments
 
 
-def segments_from_forced_alignment_words(words: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    normalized = []
-    for w in words:
-        # Supports SDK objects or plain dicts
-        text = getattr(w, "text", None) if not isinstance(w, dict) else w.get("text")
-        start = getattr(w, "start", None) if not isinstance(w, dict) else w.get("start")
-        end = getattr(w, "end", None) if not isinstance(w, dict) else w.get("end")
-        normalized.append({"text": text or "", "start": float(start or 0.0), "end": float(end or 0.0)})
+def _field(obj: Any, *names: str) -> Any:
+    """Read a field from either a dict or an SDK response object."""
+    if isinstance(obj, dict):
+        for name in names:
+            if obj.get(name) is not None:
+                return obj[name]
+        return None
+    for name in names:
+        value = getattr(obj, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def segments_from_forced_alignment_words(words: Iterable[Any]) -> list[dict[str, Any]]:
+    """Group word-level alignment results (dicts or SDK objects) into segments."""
+    normalized: list[dict[str, Any]] = []
+    for w in words or []:
+        text = _field(w, "text", "word", "token")
+        start = _field(w, "start", "start_time", "start_time_seconds")
+        end = _field(w, "end", "end_time", "end_time_seconds")
+        normalized.append({
+            "text": str(text or ""),
+            "start": float(start or 0.0),
+            "end": float(end or 0.0),
+        })
     return group_words_into_segments(normalized)
+
+
+def word_items_from_elevenlabs_response(response: Any) -> list[Any]:
+    """Return word items from a forced-alignment response when present."""
+    items = _field(response, "words", "aligned_words")
+    return list(items) if items else []
 
 
 def _char_alignment_to_words(alignment: Any) -> list[dict[str, Any]]:

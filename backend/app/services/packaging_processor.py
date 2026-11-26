@@ -22,6 +22,8 @@ from app.config import (
 )
 from app.services.text_styles import hex_rgb, normalize_lower_third, normalize_text_style
 
+_FFMPEG_TIMEOUT_SEC = 600
+
 ACCENTS = {
     "yellow": (255, 215, 0),
     "red": (235, 45, 45),
@@ -115,6 +117,7 @@ def extract_best_frame(
         subprocess.run(
             ["ffmpeg", "-nostdin", "-y", "-i", video_path, "-vf", vf, "-q:v", "2", pattern],
             cwd=work, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+            timeout=_FFMPEG_TIMEOUT_SEC,
         )
         candidates = sorted(Path(work).glob(prefix.name + "*.jpg"))
         if candidates:
@@ -134,6 +137,7 @@ def extract_best_frame(
          "-vf", f"thumbnail=150,scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}",
          "-frames:v", "1", out_path],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        timeout=_FFMPEG_TIMEOUT_SEC,
     )
     return out_path
 
@@ -293,7 +297,7 @@ def _has_audio(path: str) -> bool:
         res = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "a",
              "-show_entries", "stream=index", "-of", "csv=p=0", path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True, timeout=_FFMPEG_TIMEOUT_SEC,
         )
         return bool(res.stdout.strip())
     except Exception as e:
@@ -425,7 +429,7 @@ def export_three_vertical_shorts(
             "-movflags", "+faststart",
             out_path,
         ]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=_FFMPEG_TIMEOUT_SEC)
         short_paths.append(out_path)
         try:
             Path(banner).unlink(missing_ok=True)
@@ -442,7 +446,7 @@ def _video_dims(path: str) -> tuple[int, int] | None:
                 "ffprobe", "-v", "error", "-select_streams", "v:0",
                 "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path,
             ],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True, timeout=_FFMPEG_TIMEOUT_SEC,
         )
         raw = (res.stdout or "").strip()
         if "x" in raw:
@@ -513,5 +517,5 @@ def reexport_master_video(
         "-movflags", "+faststart",
         output_path,
     ]
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=_FFMPEG_TIMEOUT_SEC)
     return output_path

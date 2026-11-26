@@ -147,7 +147,14 @@ function AnimatedCaptionsPageInner() {
 
   const presetId = searchParams.get("preset");
 
-  const presetApplied = useRef(false);
+  const appliedPresetId = useRef<string | null>(null);
+
+  const resolveStoredStyle = (value: unknown) => {
+    const name = loadBrandFont()?.font_name;
+    return resolveTextStyle(value, name ? [name] : []);
+  };
+
+  const handoffUrl = searchParams.get("video_url");
 
   const [sourceMode, setSourceMode] = useState<SourceMode>("history");
 
@@ -166,6 +173,8 @@ function AnimatedCaptionsPageInner() {
   const [audioMode, setAudioMode] = useState<"upload" | "history">("history");
 
   const [audioFile, setAudioFile] = useState<File | null>(null);
+
+  const [audioFileDuration, setAudioFileDuration] = useState(0);
 
   const [speechHistory, setSpeechHistory] = useState<SpeechHistoryItem[]>([]);
 
@@ -253,11 +262,7 @@ function AnimatedCaptionsPageInner() {
 
     setVideoHistory(videos);
 
-    // Trimming & Zooming hands off a freshly created video via ?video_url=...
-
-    const handoffUrl = new URLSearchParams(window.location.search).get("video_url");
-
-    const initialVideo = (handoffUrl && videos.find((v) => v.video_url === handoffUrl)) || videos[0];
+    const initialVideo = videos[0];
 
     if (initialVideo) {
 
@@ -292,6 +297,22 @@ function AnimatedCaptionsPageInner() {
     if (initialTopic) setTopic(initialTopic);
 
   }, []);
+
+
+
+  // Video handoff from Edit Video; reacts to query changes without a remount.
+  useEffect(() => {
+    if (!handoffUrl) return;
+    const v = loadVideoHistory().find((item) => item.video_url === handoffUrl);
+    if (!v) return;
+    setVideoHistory((prev) =>
+      prev.some((x) => x.video_url === v.video_url) ? prev : [v, ...prev]
+    );
+    setSelectedVideoUrl(v.video_url);
+    setSourceMode("history");
+    if (v.language) setLanguage(v.language);
+    if (v.topic) setTopic(v.topic);
+  }, [handoffUrl]);
 
 
 
@@ -351,7 +372,8 @@ function AnimatedCaptionsPageInner() {
 
   useEffect(() => {
 
-    if (!presetId || presetApplied.current) return;
+    if (!presetId || appliedPresetId.current === presetId) return;
+    if (!styleReady || !lowerReady) return;
 
     const item = getDeliverableById(presetId);
 
@@ -359,7 +381,7 @@ function AnimatedCaptionsPageInner() {
 
     if (!s) return;
 
-    presetApplied.current = true;
+    appliedPresetId.current = presetId;
 
     if (s.aspect_ratio === "9:16" || s.aspect_ratio === "1:1" || s.aspect_ratio === "16:9") setAspectRatio(s.aspect_ratio);
 
@@ -371,7 +393,7 @@ function AnimatedCaptionsPageInner() {
 
     if (typeof s.trim_end_sec === "number") setTrimEndSec(s.trim_end_sec);
 
-    if (s.text_style) setTextStyle(resolveTextStyle(s.text_style));
+    if (s.text_style) setTextStyle(resolveStoredStyle(s.text_style));
 
     if (s.lower_third) setLowerThird(resolveLowerThird(s.lower_third));
 
@@ -381,7 +403,7 @@ function AnimatedCaptionsPageInner() {
 
     if (s.language === "en" || s.language === "sw") setLanguage(s.language);
 
-  }, [presetId]);
+  }, [presetId, styleReady, lowerReady]);
 
 
 
@@ -446,6 +468,8 @@ function AnimatedCaptionsPageInner() {
     sourceMode === "device" ? deviceDuration
 
     : sourceMode === "history" ? (selectedVideo?.duration_seconds || 0)
+
+    : audioMode === "upload" ? audioFileDuration
 
     : (selectedAudio?.duration_seconds || 0);
 
@@ -1121,13 +1145,23 @@ function AnimatedCaptionsPageInner() {
 
                       const f = e.target.files?.[0] || null;
 
-                      setAudioFile(f); setPreview(null);
+                      setAudioFile(f); setPreview(null); setAudioFileDuration(0);
 
                       if (f) {
 
-                        const d = await getMediaDuration(f, "audio");
+                        try {
 
-                        if (!autoVoiceDuration) setVoiceDuration(Math.max(1, d - introDelay - outroSec));
+                          const d = await getMediaDuration(f, "audio");
+
+                          setAudioFileDuration(d);
+
+                          if (!autoVoiceDuration) setVoiceDuration(Math.max(1, d - introDelay - outroSec));
+
+                        } catch {
+
+                          setAudioFileDuration(0);
+
+                        }
 
                       }
 

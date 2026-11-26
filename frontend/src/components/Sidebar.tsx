@@ -23,12 +23,23 @@ export default function Sidebar() {
   const { user, loading, logout } = useAuth();
 
   const emailInitial = (user?.email || "?").trim().charAt(0).toUpperCase() || "?";
-  const avatarStyle = user?.avatar
-    ? { backgroundImage: `url("${user.avatar}")`, backgroundSize: "cover", backgroundPosition: "center" }
+  const [currentSearch, setCurrentSearch] = useState("");
+
+  // Only accept avatar values that cannot break out of the CSS url() string.
+  const avatar =
+    user?.avatar &&
+    (/^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(user.avatar) ||
+      /^https?:\/\/[^\s"'()<>\\]+$/i.test(user.avatar))
+      ? user.avatar
+      : null;
+  const avatarStyle = avatar
+    ? { backgroundImage: `url("${avatar}")`, backgroundSize: "cover", backgroundPosition: "center" }
     : undefined;
+  const authNext = encodeURIComponent(`${pathname}${currentSearch}`);
 
   useEffect(() => {
     setOpen(false);
+    setCurrentSearch(typeof window === "undefined" ? "" : window.location.search);
   }, [pathname]);
 
   const isActive = (href: string) =>
@@ -118,7 +129,7 @@ export default function Sidebar() {
                       title={user.email}
                       aria-label={`Signed in as ${user.email}`}
                     >
-                      {!user.avatar && emailInitial}
+                      {!avatar && emailInitial}
                     </div>
                     <Link
                       href="/profile"
@@ -138,8 +149,8 @@ export default function Sidebar() {
                   </>
                 ) : !loading ? (
                   <>
-                    <Link href="/login" onClick={() => setOpen(false)} className="shrink-0 rounded-lg border px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">Log in</Link>
-                    <Link href="/signup" onClick={() => setOpen(false)} className="shrink-0 rounded-lg bg-blue-600 px-2 py-1.5 text-xs text-white hover:bg-blue-700">Sign up</Link>
+                    <Link href={`/login?next=${authNext}`} onClick={() => setOpen(false)} className="shrink-0 rounded-lg border px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">Log in</Link>
+                    <Link href={`/signup?next=${authNext}`} onClick={() => setOpen(false)} className="shrink-0 rounded-lg bg-blue-600 px-2 py-1.5 text-xs text-white hover:bg-blue-700">Sign up</Link>
                   </>
                 ) : (
                   <span className="text-xs text-gray-500">Checking...</span>

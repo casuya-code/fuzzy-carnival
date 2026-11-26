@@ -3,24 +3,13 @@
 import base64
 
 import pytest
+from fastapi.testclient import TestClient
 
-try:
-    from fastapi.testclient import TestClient
+from app.main import app
 
-    from app.main import app
-
-    client = TestClient(app)
-    _IMPORT_OK = True
-except Exception as e:  # pragma: no cover - environment-dependent
-    client = None
-    _IMPORT_OK = False
-    _IMPORT_ERR = e
-
-
-@pytest.fixture(autouse=True)
-def _require_import():
-    if not _IMPORT_OK:
-        pytest.skip(f"App import unavailable in this environment: {_IMPORT_ERR}")
+# H13: no blanket import skip. CI has an explicit import gate; if the app cannot
+# be imported here, the test suite must fail loudly.
+client = TestClient(app)
 
 
 @pytest.fixture()
@@ -49,7 +38,8 @@ def test_profile_update_persists_and_rejects_bad_avatar(session):
     assert me.json()["user"]["name"] == ""
     assert me.json()["user"]["phone"] == ""
 
-    avatar = "data:image/png;base64," + base64.b64encode(b"fake-image").decode("ascii")
+    png = b"\x89PNG\r\n\x1a\n" + b"fake-image"
+    avatar = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
     r = client.post(
         "/api/v1/auth/profile",
         headers=headers,
@@ -67,10 +57,17 @@ def test_profile_update_persists_and_rejects_bad_avatar(session):
     bad = client.post("/api/v1/auth/profile", headers=headers, json={"avatar": "not-an-image"})
     assert bad.status_code == 400
 
-    too_large = "data:image/jpeg;base64," + base64.b64encode(b"x" * 300_001).decode("ascii")
+    jpeg = b"\xff\xd8\xff" + b"x" * 300_001
+    too_large = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
     oversized = client.post("/api/v1/auth/profile", headers=headers, json={"avatar": too_large})
     assert oversized.status_code == 400
     assert "300 KB" in oversized.json()["detail"]
+
+    # H7: a valid prefix with an injected suffix must be rejected outright.
+    injected = avatar + '");background:url(javascript:alert(1))'
+    assert client.post(
+        "/api/v1/auth/profile", headers=headers, json={"avatar": injected}
+    ).status_code == 400
 
 
 def test_public_stats_counts_registered_users(session):

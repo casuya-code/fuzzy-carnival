@@ -1,15 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { useAuth } from "@/components/AuthProvider";
 
-export default function RequireAuth({ children }: { children: React.ReactNode }) {
+const checking = <div className="rounded-xl border bg-white p-6 text-sm text-gray-600">Checking account...</div>;
+
+/** Keep only same-origin paths; login/signup redirect to the result. */
+function safeNext(raw: string): string {
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) return "/";
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/")) return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
+function RequireAuthInner({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const query = searchParams.toString();
+  const next = safeNext(`${pathname}${query ? `?${query}` : ""}`);
 
   if (loading) {
-    return <div className="rounded-xl border bg-white p-6 text-sm text-gray-600">Checking account...</div>;
+    return checking;
   }
   if (!user) {
     return (
@@ -23,13 +41,13 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
           </div>
           <div className="grid grid-cols-2 gap-3 bg-gray-50/60 p-4">
             <Link
-              href={`/login?next=${encodeURIComponent(pathname)}`}
+              href={`/login?next=${encodeURIComponent(next)}`}
               className="flex w-full items-center justify-center rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
             >
               Log in
             </Link>
             <Link
-              href="/signup"
+              href={`/signup?next=${encodeURIComponent(next)}`}
               className="flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
             >
               Create account
@@ -40,4 +58,12 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
     );
   }
   return <>{children}</>;
+}
+
+export default function RequireAuth({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={checking}>
+      <RequireAuthInner>{children}</RequireAuthInner>
+    </Suspense>
+  );
 }

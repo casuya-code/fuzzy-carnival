@@ -45,18 +45,31 @@ def test_heavy_engine_does_not_evict_when_budget_allows(monkeypatch):
 
 
 def test_lru_eviction_only_when_budget_is_exceeded(monkeypatch):
-    manager = _manager(monkeypatch, 3.0)
+    manager = _manager(monkeypatch, 4.0)
     manager.get("kyutai")
     manager.get("mms")
-    # kyutai + msingi = 4.5 > 3.0; oldest local engine (kyutai) goes first.
+    # kyutai + mms + msingi = 5.0 > 4.0; oldest local engine (kyutai) goes first.
     manager.get("msingi")
     assert "msingi" in manager._loaded
+    assert "mms" in manager._loaded
     assert "kyutai" not in manager._loaded
     assert manager.engines["kyutai"].unload_count == 1
 
 
+def test_engine_larger_than_budget_is_rejected_before_loading(monkeypatch):
+    manager = _manager(monkeypatch, 0.5)
+    try:
+        manager.get("msingi")
+    except ValueError as exc:
+        assert "MAX_RAM_GB" in str(exc)
+    else:
+        raise AssertionError("an engine exceeding MAX_RAM_GB must be rejected")
+    assert manager.engines["msingi"].load_count == 0
+    assert "msingi" not in manager._loaded
+
+
 def test_cloud_engine_never_evicts_local_models(monkeypatch):
-    manager = _manager(monkeypatch, 0.1)
+    manager = _manager(monkeypatch, 2.0)
     manager.get("kyutai")
     manager.get("azure")
     assert "kyutai" in manager._loaded

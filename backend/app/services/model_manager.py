@@ -63,6 +63,14 @@ class ModelManager:
                 raise ValueError(f"Unknown engine: {name}")
             engine = self.engines[name]
 
+            # A single local engine larger than the whole budget can never fit,
+            # no matter how much we evict. Fail before ensure_loaded() to avoid
+            # driving the container into OOM (C7).
+            if name not in CLOUD_ENGINES and engine.ram_gb > MAX_RAM_GB:
+                raise ValueError(
+                    f"Engine '{name}' needs {engine.ram_gb} GB, exceeds MAX_RAM_GB={MAX_RAM_GB}"
+                )
+
             # Cloud engines use 0 local RAM; never evict local models for them.
             # Unload only as many least-recently-used local engines as the RAM budget requires.
             evicted: list[str] = []

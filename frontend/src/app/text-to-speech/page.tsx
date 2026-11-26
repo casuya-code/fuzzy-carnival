@@ -135,10 +135,13 @@ export default function TextToSpeechPage() {
     );
   };
 
+  // An empty health list can mean "details hidden", not "no engines enabled".
+  const availableEngines = health?.engines?.length ? health.engines : null;
+
   // Keep the selected engine valid for the current language and enabled backend engines.
   useEffect(() => {
     const allowed = new Set(ENGINES_BY_LANGUAGE[language]);
-    const available = health?.engines ? new Set(health.engines) : null;
+    const available = availableEngines ? new Set(availableEngines) : null;
     const isValid = (e: Engine) => allowed.has(e) && (!available || available.has(e));
     if (!isValid(engine)) {
       const preferred = DEFAULT_ENGINE[language];
@@ -147,7 +150,7 @@ export default function TextToSpeechPage() {
         : (ENGINES_BY_LANGUAGE[language].find((e: Engine) => isValid(e)) ?? preferred);
       setEngine(fallback);
     }
-  }, [language, engine, health?.engines]);
+  }, [language, engine, availableEngines]);
 
   useEffect(() => {
     let cancelled = false;
@@ -290,7 +293,7 @@ export default function TextToSpeechPage() {
               engine={engine}
               onChange={setEngine}
               language={language}
-              availableEngines={health?.engines ?? null}
+              availableEngines={availableEngines}
             />
           </div>
           <div className="space-y-6 min-w-0">

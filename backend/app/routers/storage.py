@@ -1,5 +1,6 @@
 import logging
 import shutil
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -29,7 +30,12 @@ from app.services.beat_sync_processor import (
     get_beat_synced_zoom_expr,
 )
 from app.services.r2_storage import download_reference, upload_output
-from app.services.upload_validation import scan_upload, validate_audio_upload
+from app.services.upload_validation import (
+    copy_stream_capped,
+    copy_upload_capped,
+    scan_upload_stream,
+    validate_audio_upload,
+)
 from app.auth import require_api_key
 from app.rate_limit import rate_limit
 from PIL import ImageFont
@@ -84,36 +90,22 @@ async def local_upload(key: str, request: Request):
             pass
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    size = 0
     tmp = dest.with_suffix(dest.suffix + ".uploading")
     try:
-        with tmp.open("wb") as f:
-            async for chunk in request.stream():
-                if not chunk:
-                    continue
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    raise HTTPException(status_code=413, detail=f"Upload too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
-                f.write(chunk)
+        # Stream, cap, and hash in one pass; never hold the full file in RAM (M39).
+        size, sha256_hex, prefix = await copy_stream_capped(request.stream(), tmp)
+        validate_audio_upload(dest.name, content_type, prefix)
+        scan_upload_stream(dest.name, content_type, size, sha256_hex)
+        # Publish only after validation/scan succeeds (H40).
         tmp.replace(dest)
-        try:
-            data = dest.read_bytes()
-            validate_audio_upload(dest.name, content_type, data[:64])
-            scan_upload(dest.name, content_type, data)
-        except ValueError as e:
-            dest.unlink(missing_ok=True)
-            raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception:
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        try:
-            if dest.exists() and dest.stat().st_size == 0:
-                dest.unlink(missing_ok=True)
-        except Exception:
-            pass
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
         raise
+    except Exception:
+        raise
+    finally:
+        tmp.unlink(missing_ok=True)
     return {"ok": True, "key": key, "bytes": size}
 
 
@@ -223,9 +215,10 @@ class AnalyzeRequest(BaseModel):
 @router.post("/audio/analyze")
 def analyze(req: AnalyzeRequest):
     """Analyze an uploaded/reference audio file and return quality metrics + hints."""
+    temp_dest = TEMP_AUDIO_DIR / f"analyze_{uuid.uuid4().hex}"
     path: str | None = None
     try:
-        path = _resolve_audio_key(req.key, dest=TEMP_AUDIO_DIR / f"analyze_{uuid.uuid4().hex}")
+        path = _resolve_audio_key(req.key, dest=temp_dest)
         return analyze_reference(path)
     except HTTPException:
         raise
@@ -234,7 +227,8 @@ def analyze(req: AnalyzeRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analyze failed: {e}")
     finally:
-        if path and Path(path).name.startswith("analyze_"):
+        # Delete only our own temp copy, never the user's source file (H37).
+        if path and Path(path).resolve() == temp_dest.resolve():
             _cleanup_file(path)
 
 
@@ -245,9 +239,10 @@ class BpmRequest(BaseModel):
 @router.post("/audio/bpm")
 def bpm(req: BpmRequest):
     """Detect the dominant BPM of an audio track and suggest a beat cycle."""
+    temp_dest = TEMP_AUDIO_DIR / f"bpm_{uuid.uuid4().hex}"
     path: str | None = None
     try:
-        path = _resolve_audio_key(req.key, dest=TEMP_AUDIO_DIR / f"bpm_{uuid.uuid4().hex}")
+        path = _resolve_audio_key(req.key, dest=temp_dest)
         detected = detect_bpm_lightweight(path)
         _, cycle_sec = get_beat_synced_zoom_expr(detected)
         return {"bpm": detected, "cycle_sec": cycle_sec}
@@ -258,7 +253,7 @@ def bpm(req: BpmRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"BPM detection failed: {e}")
     finally:
-        if path and Path(path).name.startswith("bpm_"):
+        if path and Path(path).resolve() == temp_dest.resolve():
             _cleanup_file(path)
 
 
@@ -302,6 +297,30 @@ def create_sfx(req: SfxRequest):
         _cleanup_dir(work_dir)
 
 
+_FONT_MAX_BYTES = 5 * 1024 * 1024
+_FONT_MAX_FILES = 64
+_FONT_TTL_SEC = 30 * 24 * 3600
+
+
+def _prune_brand_fonts(fonts_dir: Path) -> None:
+    """Bound brand-font storage by both count and age (M38)."""
+    try:
+        files = [
+            p for p in fonts_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in {".ttf", ".otf"}
+        ]
+        files.sort(key=lambda p: p.stat().st_mtime)
+        now = time.time()
+        for p in files:
+            if now - p.stat().st_mtime > _FONT_TTL_SEC:
+                p.unlink(missing_ok=True)
+        files = [p for p in files if p.exists()]
+        for p in files[: max(0, len(files) - _FONT_MAX_FILES)]:
+            p.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning("Brand-font cleanup failed: %s", e)
+
+
 @router.post("/fonts/upload")
 async def upload_brand_font(font: UploadFile = File(...)):
     """Upload a brand font (.ttf/.otf) for thumbnails/captions."""
@@ -309,16 +328,17 @@ async def upload_brand_font(font: UploadFile = File(...)):
     suffix = Path(name).suffix.lower()
     if suffix not in {".ttf", ".otf"}:
         raise HTTPException(status_code=400, detail="Font must be .ttf or .otf")
-    data = await font.read()
-    if len(data) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Font must be 5 MB or smaller")
     fonts_dir = TEMP_AUDIO_DIR / "brand_fonts"
     fonts_dir.mkdir(parents=True, exist_ok=True)
+    _prune_brand_fonts(fonts_dir)
     font_id = uuid.uuid4().hex
     dest = fonts_dir / f"{font_id}{suffix}"
-    dest.write_bytes(data)
     try:
+        copy_upload_capped(font, dest, max_bytes=_FONT_MAX_BYTES)
         family, style = ImageFont.truetype(str(dest), 24).getname()
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        raise
     except Exception:
         dest.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Invalid font file")

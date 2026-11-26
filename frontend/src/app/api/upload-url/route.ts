@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { API_BASE } from "@/lib/api";
-import { createPresignedUploadUrl, r2Configured } from "@/lib/r2";
+import { createPresignedUploadUrl, MAX_UPLOAD_BYTES, r2Configured } from "@/lib/r2";
 
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const ALLOWED_AUDIO_TYPES = new Set([
   "audio/webm",
   "audio/wav",
@@ -21,6 +20,24 @@ const ALLOWED_AUDIO_TYPES = new Set([
 const ALLOWED_EXTS = new Set(["webm", "wav", "mp3", "m4a", "aac", "ogg", "flac", "mp4"]);
 
 export async function POST(req: NextRequest) {
+  // Never mint a write URL for an anonymous caller. Do not fall back to
+  // NEXT_PUBLIC_API_KEY here: only a verified user token is authoritative.
+  const auth = req.headers.get("authorization");
+  if (!auth?.startsWith("Bearer ") || !auth.slice(7).trim()) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+  try {
+    const me = await fetch(`${API_BASE}/api/v1/auth/me`, {
+      headers: { Authorization: auth },
+      cache: "no-store",
+    });
+    if (!me.ok) {
+      return NextResponse.json({ error: "Invalid or expired token" }, { status: 401 });
+    }
+  } catch {
+    return NextResponse.json({ error: "Auth check unavailable" }, { status: 503 });
+  }
+
   try {
     const body = await req.json();
     const filename = typeof body?.filename === "string" ? body.filename : "";
@@ -28,9 +45,11 @@ export async function POST(req: NextRequest) {
     const contentType = contentTypeRaw.split(";")[0].trim().toLowerCase();
     const contentLengthRaw = body?.contentLength;
     const contentLength =
-      typeof contentLengthRaw === "number" && Number.isFinite(contentLengthRaw)
-        ? Math.max(0, Math.floor(contentLengthRaw))
-        : undefined;
+      typeof contentLengthRaw === "number" &&
+      Number.isInteger(contentLengthRaw) &&
+      contentLengthRaw > 0
+        ? contentLengthRaw
+        : 0;
 
     if (!filename || !contentType) {
       return NextResponse.json(
@@ -41,16 +60,19 @@ export async function POST(req: NextRequest) {
     if (!ALLOWED_AUDIO_TYPES.has(contentType)) {
       return NextResponse.json({ error: "Unsupported content type" }, { status: 400 });
     }
-    if (contentLength !== undefined && contentLength > MAX_UPLOAD_BYTES) {
+    if (!contentLength) {
+      return NextResponse.json({ error: "Valid contentLength is required" }, { status: 400 });
+    }
+    if (contentLength > MAX_UPLOAD_BYTES) {
       return NextResponse.json({ error: "File too large" }, { status: 413 });
     }
 
-    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
     const ext = safeName.split(".").pop()?.toLowerCase() || "";
     if (!ALLOWED_EXTS.has(ext)) {
       return NextResponse.json({ error: "Unsupported file extension" }, { status: 400 });
     }
-    const key = `references/${Date.now()}-${safeName}`;
+    const key = `references/${crypto.randomUUID()}-${safeName}`;
 
     // Local dev fallback: upload directly to backend when R2 is not configured
     if (!r2Configured) {

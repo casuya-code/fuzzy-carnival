@@ -1,9 +1,10 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   AuthUser,
   changePassword as apiChangePassword,
+  clearTokenIfAuthError,
   getUserToken,
   login as apiLogin,
   logoutAll as apiLogoutAll,
@@ -31,7 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     const token = getUserToken();
     if (!token) {
       setUser(null);
@@ -41,17 +42,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const u = await me();
       setUser(u);
-    } catch {
-      setUserToken(null);
-      setUser(null);
+    } catch (error) {
+      // Network errors and 5xx must not discard a still-valid session.
+      if (clearTokenIfAuthError(error)) setUser(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -74,9 +75,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logoutAll: async () => {
         try {
           await apiLogoutAll();
-        } finally {
           setUserToken(null);
           setUser(null);
+        } catch (error) {
+          // A server failure keeps the local session; an already-invalid one
+          // is cleared through the same central auth-failure path as refresh.
+          if (clearTokenIfAuthError(error)) {
+            setUser(null);
+            return;
+          }
+          throw error;
         }
       },
       updateProfile: async (payload) => {
@@ -90,7 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
       refresh,
     }),
-    [user, loading]
+    [user, loading, refresh]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

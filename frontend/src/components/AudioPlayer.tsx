@@ -30,7 +30,7 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
   useEffect(() => {
     setRendered(null);
     setRenderError(null);
-  }, [result?.audio_url]);
+  }, [result?.audio_url, exportSpeed, exportVolume]);
 
   const setRate = (r: number) => {
     setSpeed(r);
@@ -67,6 +67,10 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
 
   const renderExport = async () => {
     if (!result || rendering) return;
+    if (!result.audio_r2_key) {
+      setRenderError("This audio has no stored source for export. Create a new take, then try again.");
+      return;
+    }
     setRendering(true);
     setRenderError(null);
     try {
@@ -93,7 +97,7 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
     );
   }
 
-  const filenameBase = `speech-${result.engine_used}-${(result.audio_r2_key.split("/").pop() || "audio").replace(/\.[^.]+$/, "")}`;
+  const filenameBase = `speech-${result.engine_used}-${((result.audio_r2_key || "").split("/").pop() || "audio").replace(/\.[^.]+$/, "")}`;
   const friendlyEngine = ENGINE_LABEL[result.engine_used as Engine] || result.engine_used;
 
   return (

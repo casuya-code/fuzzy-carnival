@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -37,6 +37,23 @@ from app.routers import (
 from app.schemas.tts import HealthResponse
 
 logger = logging.getLogger(__name__)
+
+# Only generated output folders may be served from local disk; references,
+# uploaded inputs and scratch files must never be reachable via /static.
+_STATIC_OUTPUT_SUBDIRS = ("outputs", "audio", "video", "thumbs")
+
+_ENGINE_FLAGS = {
+    "kyutai": ENABLE_KYUTAI,
+    "afrispeech": ENABLE_AFRISPEECH,
+    "msingi": ENABLE_MSINGI,
+    "mms": ENABLE_MMS,
+    "azure": ENABLE_AZURE,
+    "elevenlabs": ENABLE_ELEVENLABS,
+}
+
+
+def _enabled_engines() -> list[str]:
+    return [name for name in ENGINE_NAMES if _ENGINE_FLAGS.get(name, False)]
 
 
 def _cleanup_temp_audio() -> None:
@@ -75,12 +92,8 @@ async def lifespan(_: FastAPI):
         _cleanup_temp_audio()
     except Exception as e:
         logger.warning("Temp audio cleanup failed: %s", e, exc_info=True)
-    try:
-        from app.routers.synthesize import get_manager
-
-        get_manager().warm_async()
-    except Exception as e:
-        logger.warning("Engine warmup could not be started: %s", e, exc_info=True)
+    # Local engine warm-up belongs to the synthesis worker process only; warming
+    # here would load duplicate weights in the API process (H17).
     yield
     # Best-effort cleanup: stop synthesis worker so it doesn't linger after shutdown.
     try:
@@ -113,45 +126,88 @@ app.include_router(captions.router)
 app.include_router(packaging.router)
 app.include_router(timeline.router)
 
-# Serve locally generated files when R2 is not configured (dev fallback).
-# Directory is created once in app.config.
+# Serve only generated output subtrees when R2 is not configured (dev fallback).
+# Mounting TEMP_AUDIO_DIR itself would expose reference audio, fonts and job inputs.
 if SERVE_STATIC:
-    app.mount("/static", StaticFiles(directory=str(TEMP_AUDIO_DIR)), name="static")
+    for _subdir in _STATIC_OUTPUT_SUBDIRS:
+        _directory = TEMP_AUDIO_DIR / _subdir
+        _directory.mkdir(parents=True, exist_ok=True)
+        app.mount(
+            f"/static/{_subdir}",
+            StaticFiles(directory=str(_directory)),
+            name=f"static-{_subdir}",
+        )
+
+
+def _is_ready() -> bool:
+    """Liveness stays in /health; readiness adds lightweight degradation checks."""
+    try:
+        warmup = synthesize.get_manager().warmup_status()
+        if any(info.get("status") == "failed" for info in warmup.values()):
+            # Do not log warm-up error strings (may contain internal paths/keys).
+            for name, info in warmup.items():
+                if info.get("status") == "failed":
+                    logger.warning("Warmup failed for engine %s", name)
+            return False
+    except Exception as e:
+        logger.warning("Health check failed: %s", type(e).__name__)
+        return False
+    try:
+        from app.services.synthesis_worker import get_synthesis_worker
+
+        worker = get_synthesis_worker()
+        if worker.ever_started and not worker.is_alive():
+            return False
+    except Exception:
+        # A worker that has not been started yet is not a readiness failure.
+        pass
+    return True
+
+
+@app.get("/ready")
+def ready():
+    """Readiness probe for orchestrators; 503 when the instance cannot serve work."""
+    if not _is_ready():
+        raise HTTPException(status_code=503, detail="Service is not ready")
+    return {"status": "ready"}
 
 
 @app.get("/health", response_model=HealthResponse)
 def health():
+    ready = _is_ready()
+
+    if not EXPOSE_HEALTH_DETAILS:
+        # Minimal liveness-oriented response for public exposure. The enabled
+        # engine names are non-sensitive and required by the UI (C8); keep the
+        # HealthResponse key shape unchanged.
+        return HealthResponse(
+            status="ok" if ready else "degraded",
+            awake=True,
+            ready=ready,
+            loaded_models=[],
+            engines=_enabled_engines(),
+            capabilities={},
+            worker={},
+            issues=[],
+        )
+
+    # Detailed data is only computed when it will actually be returned (M14).
     loaded: list[str] = []
     issues: list[str] = []
     warmup: dict[str, dict[str, str]] = {}
-    ready = True
     try:
-        manager = synthesize.get_manager()
-        loaded = manager.loaded_models()
-        warmup = manager.warmup_status()
-        for name, info in warmup.items():
-            status = info.get("status")
-            if status == "failed":
-                ready = False
-                # Do not leak internal exception details by default.
-                logger.warning("Warmup failed for %s: %s", name, info.get("error", "failed"))
-                issues.append(f"warmup:{name}:failed")
-            elif status in {"warming", "pending"}:
-                pass
+        loaded = synthesize.get_manager().loaded_models()
+        warmup = synthesize.get_manager().warmup_status()
+        issues.extend(
+            f"warmup:{name}:failed"
+            for name, info in warmup.items()
+            if info.get("status") == "failed"
+        )
     except Exception as e:
-        ready = False
-        logger.warning("Health check failed: %s", e, exc_info=True)
         issues.append("health:unavailable")
+        logger.warning("Health check failed: %s", type(e).__name__)
 
-    engine_flags = {
-        "kyutai": ENABLE_KYUTAI,
-        "afrispeech": ENABLE_AFRISPEECH,
-        "msingi": ENABLE_MSINGI,
-        "mms": ENABLE_MMS,
-        "azure": ENABLE_AZURE,
-        "elevenlabs": ENABLE_ELEVENLABS,
-    }
-    worker_status = {}
+    worker_status: dict = {}
     try:
         from app.services.synthesis_worker import get_synthesis_worker
 
@@ -166,27 +222,13 @@ def health():
         "synthesis_busy": bool(synthesize.is_synthesis_busy()),
         "worker_alive": bool(worker_status.get("alive")),
     }
-    engines = [name for name in ENGINE_NAMES if engine_flags.get(name, False)]
-
-    if not EXPOSE_HEALTH_DETAILS:
-        # Minimal liveness-oriented response for public exposure.
-        return HealthResponse(
-            status="ok" if ready else "degraded",
-            awake=True,
-            ready=ready,
-            loaded_models=[],
-            engines=[],
-            capabilities={},
-            worker={},
-            issues=[],
-        )
 
     return HealthResponse(
         status="ok" if ready else "degraded",
         awake=True,
         ready=ready,
         loaded_models=loaded,
-        engines=engines,
+        engines=_enabled_engines(),
         capabilities=capabilities,
         worker=worker_status,
         issues=issues,

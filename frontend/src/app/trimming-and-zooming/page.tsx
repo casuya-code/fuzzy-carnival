@@ -70,7 +70,12 @@ import { createObjectUrlRegistry } from "@/lib/objectUrls";
 
 import type { AspectRatio } from "@/lib/platformAspects";
 
-import { DEFAULT_SFX, DEFAULT_SFX_LEVEL, type SfxId } from "@/lib/transitionSfx";
+import {
+  DEFAULT_SFX,
+  DEFAULT_SFX_LEVEL,
+  SFX_OPTIONS,
+  type SfxId,
+} from "@/lib/transitionSfx";
 
 import { loadBrandFont } from "@/lib/textStyles";
 
@@ -172,49 +177,7 @@ function TrimmingAndZoomingPageInner() {
 
   const presetId = searchParams.get("preset");
 
-  const presetApplied = useRef(false);
-
-
-
-  useEffect(() => {
-
-    if (!presetId || presetApplied.current) return;
-
-    const item = getDeliverableById(presetId);
-
-    const s = item?.meta?.settings as Record<string, any> | undefined;
-
-    if (!s) return;
-
-    presetApplied.current = true;
-
-    if (s.aspect_ratio === "9:16" || s.aspect_ratio === "1:1" || s.aspect_ratio === "16:9") setAspectRatio(s.aspect_ratio);
-
-    if (typeof s.trim_end_sec === "number") setTrimEndSec(s.trim_end_sec);
-
-    if (typeof s.transition === "string") setDefaultTransition(s.transition);
-
-    if (typeof s.transition_duration_sec === "number") setTransitionDuration(s.transition_duration_sec);
-
-    if (typeof s.transition_sfx === "string") setTransitionSfx(s.transition_sfx as SfxId);
-
-    if (typeof s.transition_sfx_level === "number") setSfxLevel(s.transition_sfx_level);
-
-    if (typeof s.overlay_effect === "string") setOverlayEffect(s.overlay_effect);
-
-    if (s.overlay_position === "top-left" || s.overlay_position === "top-right" || s.overlay_position === "bottom-left" || s.overlay_position === "bottom-right") setOverlayPosition(s.overlay_position);
-
-    if (typeof s.overlay_size === "number") setOverlaySize(s.overlay_size);
-
-    if (typeof s.overlay_opacity === "number") setOverlayOpacity(s.overlay_opacity);
-
-    if (typeof s.upscale_2k === "boolean") setUpscale2k(s.upscale_2k);
-
-    if (typeof s.loudnorm === "boolean") setLoudnorm(s.loudnorm);
-
-    if (s.language === "en" || s.language === "sw") setLanguage(s.language);
-
-  }, [presetId]);
+  const appliedPresetId = useRef<string | null>(null);
 
 
 
@@ -231,6 +194,58 @@ function TrimmingAndZoomingPageInner() {
     if (firstWithLanguage?.language) setLanguage(firstWithLanguage.language);
 
   }, []);
+
+
+
+  // Apply a preset after the history restore effect above, so its values win.
+  useEffect(() => {
+    if (!presetId || appliedPresetId.current === presetId) return;
+
+    const item = getDeliverableById(presetId);
+    const s = item?.meta?.settings as Record<string, any> | undefined;
+    if (!s) return;
+    appliedPresetId.current = presetId;
+
+    if (s.aspect_ratio === "9:16" || s.aspect_ratio === "1:1" || s.aspect_ratio === "16:9") setAspectRatio(s.aspect_ratio);
+
+    if (typeof s.trim_end_sec === "number") setTrimEndSec(s.trim_end_sec);
+
+    if (typeof s.transition === "string") setDefaultTransition(s.transition);
+
+    if (typeof s.transition_duration_sec === "number") setTransitionDuration(s.transition_duration_sec);
+
+    if (
+      typeof s.transition_sfx === "string" &&
+      SFX_OPTIONS.some((o) => o.id === s.transition_sfx)
+    ) {
+      setTransitionSfx(s.transition_sfx as SfxId);
+    }
+
+    if (typeof s.transition_sfx_level === "number") setSfxLevel(s.transition_sfx_level);
+
+    if (typeof s.overlay_effect === "string") setOverlayEffect(s.overlay_effect);
+
+    if (
+      s.overlay_position === "top-left" ||
+      s.overlay_position === "top-right" ||
+      s.overlay_position === "bottom-left" ||
+      s.overlay_position === "bottom-right" ||
+      s.overlay_position === "center"
+    ) {
+      setOverlayPosition(s.overlay_position);
+    }
+
+    if (typeof s.overlay_size === "number") setOverlaySize(s.overlay_size);
+
+    if (typeof s.overlay_opacity === "number") setOverlayOpacity(s.overlay_opacity);
+
+    if (typeof s.upscale_2k === "boolean") setUpscale2k(s.upscale_2k);
+
+    if (typeof s.loudnorm === "boolean") setLoudnorm(s.loudnorm);
+
+    if (s.language === "en" || s.language === "sw") setLanguage(s.language);
+
+  }, [presetId]);
 
 
 
@@ -548,6 +563,10 @@ function TrimmingAndZoomingPageInner() {
 
             trimEndSec,
 
+            transition: defaultTransition,
+
+            transitionDuration,
+
             overlayEffect,
 
             language,
@@ -557,6 +576,10 @@ function TrimmingAndZoomingPageInner() {
             audioIdentity,
 
             gaps: payload.transitions,
+
+            upscale2k,
+
+            loudnorm,
 
             quickPreview,
 

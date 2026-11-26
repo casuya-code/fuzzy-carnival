@@ -163,6 +163,11 @@ class SynthesisWorker:
         p = self._proc
         return bool(p is not None and p.is_alive())
 
+    @property
+    def ever_started(self) -> bool:
+        """Whether this process has ever spawned a worker (readiness checks)."""
+        return self._started_at is not None
+
     def status(self) -> dict[str, Any]:
         p = self._proc
         return {
@@ -247,7 +252,9 @@ class SynthesisWorker:
                 self.restart()
                 return SynthesisJobResult(ok=False, error_type="WorkerError", error_message=f"Synthesis worker communication failed: {e}")
             if got_id != job_id:
-                # stale/unknown result; ignore
+                # A warm (or otherwise concurrent) result may arrive for a
+                # different owner. Put it back so that owner still receives it.
+                self._result_q.put((got_id, result))
                 continue
             return result
 

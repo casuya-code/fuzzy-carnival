@@ -1,7 +1,7 @@
 """Background (202) variants of the video render endpoints.
 
 Every render option is forwarded unchanged to the existing synchronous endpoints;
-only the transport changes. Jobs are process-local and bounded by
+only the transport changes. Jobs are process-local and bounded per owner by
 ``VIDEO_JOB_MAX_CONCURRENT``.
 """
 
@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import shutil
 import time
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -23,7 +24,10 @@ from app.observability import record
 from app.rate_limit import rate_limit
 from app.routers.video import (
     _effect_overlay,
+    _font_path_or_400,
+    _lower_third_or_400,
     _overlay_settings,
+    _parse_segment_keys,
     _save_overlay_upload,
     _sfx_settings,
     _text_style_or_400,
@@ -35,7 +39,9 @@ from app.routers.video import (
 from app.services.audio_processor import _media_tools_available
 from app.services.captions_processor import DEFAULT_ASPECT_RATIO, SAFE_ZONES
 from app.services.job_context import JobCancelled, JobContext, reset_job_context, set_job_context
-from app.services.video_jobs import get_video_job_store
+from app.services.user_store import verify_access_token
+from app.services.upload_validation import copy_upload_capped
+from app.services.video_jobs import bind_job_owner, clear_job_owner, get_video_job_store
 from app.services.video_overlays import DEFAULT_OVERLAY as DEFAULT_EFFECT_OVERLAY
 from app.services.video_transitions import DEFAULT_TRANSITION, DEFAULT_TRANSITION_DURATION_SEC
 from app.services.local_overlays import (
@@ -50,15 +56,38 @@ router = APIRouter(
     tags=["video-jobs"],
     dependencies=[Depends(require_api_key), Depends(rate_limit)],
 )
+logger = logging.getLogger(__name__)
+
+# Strong references: without these the event loop may garbage-collect a pending
+# task mid-render. Drained on shutdown so no renderer outlives its container.
+_TASKS: set[asyncio.Task] = set()
 
 
 def _owner(request: Request) -> str:
-    token = (
-        request.headers.get("authorization")
-        or request.headers.get("x-api-key")
-        or (request.client.host if request.client else "anonymous")
-    )
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+    """Hash the verified token subject, not the raw header (M21)."""
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        payload = verify_access_token(token)
+        if payload:
+            subject = f"user:{payload.get('id')}"
+            return hashlib.sha256(subject.encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha256(f"bearer:{token}".encode("utf-8")).hexdigest()[:16]
+    key = request.headers.get("x-api-key") or ""
+    if key:
+        return hashlib.sha256(f"key:{key}".encode("utf-8")).hexdigest()[:16]
+    host = request.client.host if request.client else "anonymous"
+    return hashlib.sha256(f"host:{host}".encode("utf-8")).hexdigest()[:16]
+
+
+@router.on_event("shutdown")
+async def _drain_jobs() -> None:
+    tasks = list(_TASKS)
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _materialize(job_id: str, uploads: Optional[UploadFile], prefix: str = "input") -> tuple[Path, Any]:
@@ -68,8 +97,7 @@ async def _materialize(job_id: str, uploads: Optional[UploadFile], prefix: str =
         return work, None
     name = Path(uploads.filename or "upload.bin").name
     dest = work / f"{prefix}_{name}"
-    with open(dest, "wb") as f:
-        shutil.copyfileobj(uploads.file, f)
+    copy_upload_capped(uploads, dest)
     return work, (name, str(dest))
 
 
@@ -80,8 +108,7 @@ async def _materialize_clips(job_id: str, clips: List[UploadFile]) -> tuple[Path
     for i, up in enumerate(clips):
         name = Path(up.filename or f"clip_{i}.mp4").name
         dest = work / f"clip_{i}_{name}"
-        with open(dest, "wb") as f:
-            shutil.copyfileobj(up.file, f)
+        copy_upload_capped(up, dest)
         specs.append((name, str(dest)))
     return work, specs
 
@@ -130,7 +157,7 @@ async def _execute(job_id: str, kind: str, work: Path, specs: dict[str, Any], pa
     def progress(stage: str, pct: float) -> None:
         store.update(job, stage=stage, progress=pct)
 
-    token = set_job_context(JobContext(job.cancel_event, progress))
+    token = set_job_context(JobContext(job.cancel_event, progress, kind=kind))
     started = time.perf_counter()
     try:
         if job.cancel_event.is_set():
@@ -160,10 +187,54 @@ async def _execute(job_id: str, kind: str, work: Path, specs: dict[str, Any], pa
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _validate_common(aspect_ratio: str, gap_count: int, transition: str, duration: float, transitions: str | None) -> None:
+def _validate_common(
+    aspect_ratio: str,
+    gap_count: int,
+    transition: str,
+    duration: float,
+    transitions: str | None,
+    lower_third: str | None = None,
+    font_path: str | None = None,
+) -> None:
     if aspect_ratio not in SAFE_ZONES:
         raise HTTPException(status_code=400, detail="Invalid aspect_ratio")
     _transition_settings(transition, duration, transitions, gap_count)
+    _lower_third_or_400(lower_third)
+    _font_path_or_400(font_path)
+
+
+def _spawn(job_id: str, kind: str, work: Path, specs: dict[str, Any], params: dict[str, Any]) -> None:
+    """Keep a strong task reference and discard it when done (H32)."""
+    task = asyncio.create_task(_execute(job_id, kind, work, specs, params))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+
+
+async def _submit(
+    request: Request,
+    kind: str,
+    prepare: Callable[[str], Awaitable[tuple[Path, dict[str, Any], dict[str, Any]]]],
+    owner: str,
+) -> JSONResponse:
+    """Acquire a per-owner slot, create the job, materialize, spawn, and clean up (H34)."""
+    store = get_video_job_store()
+    ctx_token = bind_job_owner(owner)
+    work: Path | None = None
+    try:
+        if not store.acquire_slot():
+            raise HTTPException(status_code=429, detail="Another video render is already running")
+        try:
+            job = store.create(kind, owner)
+            work, specs, params = await prepare(job.id)
+            _spawn(job.id, kind, work, specs, params)
+        except BaseException:
+            store.release_slot()
+            if work is not None:
+                shutil.rmtree(work, ignore_errors=True)
+            raise
+    finally:
+        clear_job_owner(ctx_token)
+    return _accepted(job)
 
 
 @router.get("/{job_id}")
@@ -220,25 +291,24 @@ async def submit_process(
         raise HTTPException(status_code=503, detail="FFmpeg/ffprobe required for video processing")
     if not clips or (audio is None and not audio_r2_key):
         raise HTTPException(status_code=400, detail="Clips and an audio track are required")
-    _validate_common(aspect_ratio, len(clips) - 1, transition, transition_duration_sec, transitions)
+    _validate_common(
+        aspect_ratio, len(clips) - 1, transition, transition_duration_sec,
+        transitions, lower_third, font_path,
+    )
     _sfx_settings(transition_sfx, transition_sfx_level)
     _overlay_settings(overlay_position, overlay_size, overlay_opacity)
     _effect_overlay(overlay)
     _text_style_or_400(caption_style)
 
-    store = get_video_job_store()
-    if not store.acquire_slot():
-        raise HTTPException(status_code=429, detail="Another video render is already running")
-    job = store.create("process", _owner(request))
-    try:
-        work, clip_specs = await _materialize_clips(job.id, clips)
-        _, audio_spec = await _materialize(job.id, audio, prefix="audio")
-        _, overlay_spec = await _materialize(job.id, overlay_image, prefix="overlay")
+    async def prepare(job_id: str):
+        work, clip_specs = await _materialize_clips(job_id, clips)
+        _, audio_spec = await _materialize(job_id, audio, prefix="audio")
+        _, overlay_spec = await _materialize(job_id, overlay_image, prefix="overlay")
         if overlay_spec:
             # Validate the same way the sync endpoint does, before accepting the job.
             probe = _open_upload(overlay_spec)
             try:
-                _save_overlay_upload(probe, work, job.id)
+                _save_overlay_upload(probe, work, job_id)
             finally:
                 probe.file.close()
         params = dict(
@@ -268,12 +338,9 @@ async def submit_process(
             lower_third_duration_sec=lower_third_duration_sec,
             font_path=font_path,
         )
-    except BaseException:
-        store.release_slot()
-        shutil.rmtree(TEMP_AUDIO_DIR / "video_jobs" / f"{job.id}_input", ignore_errors=True)
-        raise
-    asyncio.create_task(_execute(job.id, "process", work, {"clips": clip_specs, "audio": audio_spec, "overlay": overlay_spec}, params))
-    return _accepted(job)
+        return work, {"clips": clip_specs, "audio": audio_spec, "overlay": overlay_spec}, params
+
+    return await _submit(request, "process", prepare, _owner(request))
 
 
 @router.post("/process-batch")
@@ -300,13 +367,9 @@ async def submit_batch(
     _validate_common(aspect_ratio, len(clips) - 1, transition, transition_duration_sec, transitions)
     _effect_overlay(overlay)
 
-    store = get_video_job_store()
-    if not store.acquire_slot():
-        raise HTTPException(status_code=429, detail="Another video render is already running")
-    job = store.create("batch", _owner(request))
-    try:
-        work, clip_specs = await _materialize_clips(job.id, clips)
-        _, audio_spec = await _materialize(job.id, audio, prefix="audio")
+    async def prepare(job_id: str):
+        work, clip_specs = await _materialize_clips(job_id, clips)
+        _, audio_spec = await _materialize(job_id, audio, prefix="audio")
         params = dict(
             aspect_ratio=aspect_ratio,
             trim_end_sec=trim_end_sec,
@@ -320,12 +383,9 @@ async def submit_batch(
             overlay=overlay,
             preview=preview,
         )
-    except BaseException:
-        store.release_slot()
-        shutil.rmtree(TEMP_AUDIO_DIR / "video_jobs" / f"{job.id}_input", ignore_errors=True)
-        raise
-    asyncio.create_task(_execute(job.id, "batch", work, {"clips": clip_specs, "audio": audio_spec, "overlay": None}, params))
-    return _accepted(job)
+        return work, {"clips": clip_specs, "audio": audio_spec, "overlay": None}, params
+
+    return await _submit(request, "batch", prepare, _owner(request))
 
 
 @router.post("/finalize")
@@ -363,23 +423,23 @@ async def submit_finalize(
         raise HTTPException(status_code=503, detail="FFmpeg/ffprobe required for video processing")
     if audio is None and not audio_r2_key:
         raise HTTPException(status_code=400, detail="Provide an audio track")
-    segments = [s.strip() for s in video_r2_keys.replace("[", "").replace("]", "").replace('"', "").split(",") if s.strip()]
+    # Shared parser: JSON array (keys may contain commas) with CSV fallback (H29).
+    segments = _parse_segment_keys(video_r2_keys)
     if not segments:
         raise HTTPException(status_code=400, detail="At least one video segment is required")
-    _validate_common(aspect_ratio, len(segments) - 1, transition, transition_duration_sec, transitions)
+    _validate_common(
+        aspect_ratio, len(segments) - 1, transition, transition_duration_sec,
+        transitions, lower_third, font_path,
+    )
     _sfx_settings(transition_sfx, transition_sfx_level)
     _overlay_settings(overlay_position, overlay_size, overlay_opacity)
     _effect_overlay(overlay)
     _text_style_or_400(caption_style)
 
-    store = get_video_job_store()
-    if not store.acquire_slot():
-        raise HTTPException(status_code=429, detail="Another video render is already running")
-    job = store.create("finalize", _owner(request))
-    try:
-        work, _ = await _materialize_clips(job.id, [])
-        _, audio_spec = await _materialize(job.id, audio, prefix="audio")
-        _, overlay_spec = await _materialize(job.id, overlay_image, prefix="overlay")
+    async def prepare(job_id: str):
+        work, _ = await _materialize_clips(job_id, [])
+        _, audio_spec = await _materialize(job_id, audio, prefix="audio")
+        _, overlay_spec = await _materialize(job_id, overlay_image, prefix="overlay")
         params = dict(
             video_r2_keys=video_r2_keys,
             audio_r2_key=audio_r2_key,
@@ -407,12 +467,9 @@ async def submit_finalize(
             lower_third_duration_sec=lower_third_duration_sec,
             font_path=font_path,
         )
-    except BaseException:
-        store.release_slot()
-        shutil.rmtree(TEMP_AUDIO_DIR / "video_jobs" / f"{job.id}_input", ignore_errors=True)
-        raise
-    asyncio.create_task(_execute(job.id, "finalize", work, {"clips": [], "audio": audio_spec, "overlay": overlay_spec}, params))
-    return _accepted(job)
+        return work, {"clips": [], "audio": audio_spec, "overlay": overlay_spec}, params
+
+    return await _submit(request, "finalize", prepare, _owner(request))
 
 
 def _accepted(job) -> JSONResponse:

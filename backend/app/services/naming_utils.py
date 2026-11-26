@@ -23,8 +23,9 @@ LANG_CODES = {
 def sanitize_topic(topic: str, max_len: int = 24) -> str:
     if not topic or not topic.strip():
         return "Untitled"
-    words = re.sub(r"[^a-zA-Z0-9\s]", "", topic).split()
-    camel = "".join(w.capitalize() for w in words)
+    # Unicode-aware: keep accented/non-Latin names and the author's casing.
+    words = re.sub(r"[^\w\s]", "", topic, flags=re.UNICODE).split()
+    camel = "".join(w[:1].upper() + w[1:] for w in words)
     return camel[:max_len] or "Untitled"
 
 

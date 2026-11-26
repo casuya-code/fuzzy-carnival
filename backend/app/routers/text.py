@@ -26,6 +26,15 @@ def normalize(req: NormalizeRequest):
     return {"normalized": normalize_text(req.text, lang)}
 
 
+def _warm_engine_locked(engine: str) -> bool:
+    """Serialize warming with synthesis so worker results cannot cross owners."""
+    from app.routers.synthesize import _synthesize_lock
+    from app.services.synthesis_worker import get_synthesis_worker
+
+    with _synthesize_lock:
+        return get_synthesis_worker().warm(engine)
+
+
 @router.post("/warm")
 async def warm(req: WarmRequest):
     """Pre-load an engine so the next synthesis is fast. Cloud engines are no-op (0 RAM).
@@ -38,9 +47,7 @@ async def warm(req: WarmRequest):
     if req.engine in CLOUD_ENGINES:
         return {"warmed": True, "engine": req.engine, "cloud": True}
     try:
-        from app.services.synthesis_worker import get_synthesis_worker
-
-        warmed = await run_in_threadpool(get_synthesis_worker().warm, req.engine)
+        warmed = await run_in_threadpool(_warm_engine_locked, req.engine)
         return {"warmed": warmed, "engine": req.engine}
     except Exception as e:
         return {"warmed": False, "engine": req.engine, "error": str(e)}

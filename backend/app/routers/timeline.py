@@ -11,7 +11,9 @@ from app.services.audio_processor import get_duration
 from app.services.r2_storage import download_reference
 from app.services.timeline_service import (
     estimate_timeline,
+    extract_timeline_from_elevenlabs_timestamps_response,
     segments_from_forced_alignment_words,
+    word_items_from_elevenlabs_response,
 )
 from app.auth import require_api_key
 from app.rate_limit import rate_limit
@@ -59,8 +61,14 @@ def build_timeline(req: TimelineRequest):
                 client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
                 with open(audio_path, "rb") as f:
                     resp = client.forced_alignment.create(file=f, text=text)
-                words = getattr(resp, "words", None) or []
-                segments = segments_from_forced_alignment_words(words)
+                words = word_items_from_elevenlabs_response(resp)
+                # Prefer word-level results (.text/.word); character-level
+                # timestamp responses are handled by the extractor fallback.
+                segments = (
+                    segments_from_forced_alignment_words(words)
+                    if words
+                    else extract_timeline_from_elevenlabs_timestamps_response(resp)
+                )
                 if segments:
                     return TimelineResponse(
                         timeline=segments,
@@ -91,8 +99,14 @@ def build_timeline(req: TimelineRequest):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Timeline generation failed: {e}")
+    except RuntimeError as e:
+        # Missing R2/local object is a client input problem (M44).
+        raise HTTPException(status_code=404, detail="Audio key not found") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception:
+        logger.exception("Timeline generation failed")
+        raise HTTPException(status_code=500, detail="Timeline generation failed")
     finally:
         try:
             if audio_path and audio_path.exists():

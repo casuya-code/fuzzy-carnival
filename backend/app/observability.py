@@ -16,19 +16,40 @@ from typing import Any, Iterator
 logger = logging.getLogger("app.observability")
 
 _MAX_SAMPLES = 500
+_MAX_EVENTS = 200
+_MAX_FIELD_VALUE_LEN = 128
 _lock = threading.Lock()
 _samples: dict[str, deque[dict[str, Any]]] = {}
+
+
+def _log_safe(value: Any) -> str:
+    """Neutralize separators/control chars so a field cannot forge a log line (M15)."""
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
 
 
 def record(event: str, duration_ms: float, **fields: Any) -> None:
     """Store one sample and log it. Fields are caller-controlled: never pass PII."""
     duration = round(float(duration_ms), 2)
-    sample = {"duration_ms": duration, "ts": round(time.time(), 3)}
-    sample.update({k: v for k, v in fields.items() if v is not None})
+    sample: dict[str, Any] = {"duration_ms": duration, "ts": round(time.time(), 3)}
+    sample.update(
+        {
+            k: (v[:_MAX_FIELD_VALUE_LEN] if isinstance(v, str) else v)
+            for k, v in fields.items()
+            if v is not None
+        }
+    )
+    safe_event = _log_safe(event)[:80]
     with _lock:
-        _samples.setdefault(event, deque(maxlen=_MAX_SAMPLES)).append(sample)
-    extras = " ".join(f"{k}={v}" for k, v in sample.items() if k not in ("duration_ms", "ts"))
-    logger.info("metric event=%s duration_ms=%.2f %s", event, duration, extras)
+        if safe_event not in _samples and len(_samples) >= _MAX_EVENTS:
+            # H9: cap event cardinality with FIFO eviction of the oldest key.
+            _samples.pop(next(iter(_samples)), None)
+        _samples.setdefault(safe_event, deque(maxlen=_MAX_SAMPLES)).append(sample)
+    extras = " ".join(
+        f"{k}={_log_safe(v)}"
+        for k, v in sample.items()
+        if k not in ("duration_ms", "ts")
+    )
+    logger.info("metric event=%s duration_ms=%.2f %s", safe_event, duration, extras)
 
 
 @contextmanager
