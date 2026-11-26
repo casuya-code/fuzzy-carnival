@@ -241,7 +241,8 @@ a name, phone number and profile picture, and change their password. Profile
 data is stored in the backend SQLite database (`APP_DB_PATH`). Changing the
 password revokes older sessions and returns a fresh token for the current one.
 `GET /api/v1/auth/stats` returns the public aggregate registered-user count
-shown in the home card (no personal data).
+shown in the home card (no personal data). Profile pictures are resized to
+256×256 and capped at 300 KB.
 
 ## Memory management
 

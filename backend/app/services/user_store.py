@@ -16,7 +16,7 @@ from app.config import APP_DB_PATH, AUTH_SECRET, AUTH_TOKEN_TTL_HOURS
 RESET_TOKEN_TTL_SEC = 3600
 MAX_FAILED_LOGINS = 10
 LOCKOUT_SEC = 15 * 60
-MAX_AVATAR_BYTES = 1_000_000
+MAX_AVATAR_BYTES = 300_000
 
 
 def _db_path() -> Path:
@@ -284,7 +284,7 @@ def _validated_avatar(avatar: str | None) -> str:
     except Exception as e:
         raise ValueError("Invalid profile image data") from e
     if not raw or len(raw) > MAX_AVATAR_BYTES:
-        raise ValueError("Profile image is too large")
+        raise ValueError("Profile image is too large (300 KB maximum)")
     return value
 
 

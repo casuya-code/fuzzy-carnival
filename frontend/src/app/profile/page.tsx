@@ -6,6 +6,18 @@ import { useAuth } from "@/components/AuthProvider";
 import RequireAuth from "@/components/RequireAuth";
 
 const MAX_IMAGE_BYTES = 5_000_000;
+const AVATAR_MAX_BYTES = 300_000;
+
+/** Re-encode a square canvas as a JPEG data URL within the backend cap. */
+function toAvatarDataUrl(canvas: HTMLCanvasElement): string | null {
+  for (const quality of [0.82, 0.7, 0.6, 0.5]) {
+    const dataUrl = canvas.toDataURL("image/jpeg", quality);
+    const encoded = dataUrl.split(",", 2)[1] || "";
+    const bytes = Math.floor((encoded.length * 3) / 4);
+    if (bytes <= AVATAR_MAX_BYTES) return dataUrl;
+  }
+  return null;
+}
 
 function ProfileForm() {
   const { user, updateProfile, changePassword } = useAuth();
@@ -61,7 +73,12 @@ function ProfileForm() {
         if (!ctx) return;
         const side = Math.min(img.width, img.height);
         ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 256, 256);
-        setAvatar(canvas.toDataURL("image/jpeg", 0.82));
+        const resized = toAvatarDataUrl(canvas);
+        if (!resized) {
+          setProfileError("Profile image is too large even after resizing.");
+          return;
+        }
+        setAvatar(resized);
       };
       img.src = String(reader.result);
     };

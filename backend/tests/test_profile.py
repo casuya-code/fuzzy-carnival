@@ -67,6 +67,11 @@ def test_profile_update_persists_and_rejects_bad_avatar(session):
     bad = client.post("/api/v1/auth/profile", headers=headers, json={"avatar": "not-an-image"})
     assert bad.status_code == 400
 
+    too_large = "data:image/jpeg;base64," + base64.b64encode(b"x" * 300_001).decode("ascii")
+    oversized = client.post("/api/v1/auth/profile", headers=headers, json={"avatar": too_large})
+    assert oversized.status_code == 400
+    assert "300 KB" in oversized.json()["detail"]
+
 
 def test_public_stats_counts_registered_users(session):
     import app.services.user_store as us
