@@ -24,6 +24,7 @@ function ProfileForm() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [avatar, setAvatar] = useState("");
+  const [avatarFileName, setAvatarFileName] = useState("");
   const [profileMsg, setProfileMsg] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -40,6 +41,7 @@ function ProfileForm() {
       setName(user.name || "");
       setPhone(user.phone || "");
       setAvatar(user.avatar || "");
+      setAvatarFileName("");
     }
   }, [user]);
 
@@ -54,6 +56,7 @@ function ProfileForm() {
     const file = e.target.files?.[0];
     if (!file) return;
     setProfileError(null);
+    setProfileMsg(null);
     if (!file.type.startsWith("image/")) {
       setProfileError("Choose an image file.");
       return;
@@ -79,6 +82,7 @@ function ProfileForm() {
           return;
         }
         setAvatar(resized);
+        setAvatarFileName(file.name);
       };
       img.src = String(reader.result);
     };
@@ -92,6 +96,7 @@ function ProfileForm() {
     setSavingProfile(true);
     try {
       await updateProfile({ name, phone, avatar });
+      setAvatarFileName("");
       setProfileMsg("Profile saved.");
     } catch (err: any) {
       setProfileError(err?.message || "Could not save profile.");
@@ -123,122 +128,176 @@ function ProfileForm() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-5 py-8">
-      <header>
-        <h1 className="text-2xl font-bold text-gray-900">Your profile</h1>
-        <p className="mt-1 text-sm text-gray-600">Manage your account details and password.</p>
+    <div className="mx-auto w-full max-w-5xl px-4 py-8">
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Account settings</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-gray-900 sm:text-3xl">Your profile</h1>
+          <p className="mt-1 text-sm text-gray-600">Manage your account details and password.</p>
+        </div>
+        <Link
+          href="/"
+          className="rounded-lg border bg-white px-3 py-2 text-sm text-gray-700 shadow-sm hover:bg-gray-50"
+        >
+          ← Back to home
+        </Link>
       </header>
 
-      <form onSubmit={saveProfile} className="space-y-4 rounded-2xl border bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-900">Account details</h2>
-        <div className="flex items-center gap-4">
-          <div
-            className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xl font-bold text-white shadow-sm"
-            style={avatarStyle}
-            aria-label="Profile picture"
-          >
-            {!avatar && initial}
+      <div className="grid gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
+        <form onSubmit={saveProfile} className="h-fit space-y-5 rounded-2xl border bg-white p-5 shadow-sm sm:p-6">
+          <div className="flex items-center gap-3 border-b border-gray-100 pb-4">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-lg" aria-hidden="true">👤</span>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Account details</h2>
+              <p className="text-xs text-gray-500">How your account appears in Yakodonyo.</p>
+            </div>
           </div>
-          <div className="space-y-2">
+
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/60 p-5 text-center">
+            <div
+              className="mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-blue-600 text-2xl font-bold text-white shadow-md ring-4 ring-white"
+              style={avatarStyle}
+              aria-label="Profile picture"
+            >
+              {!avatar && initial}
+            </div>
+            <p className="mt-3 text-sm font-semibold text-gray-800">Profile picture</p>
+            <p className="truncate text-xs text-gray-500" title={avatarFileName}>{avatarFileName || "No file chosen"}</p>
+            <input id="avatar-upload" type="file" accept="image/*" onChange={onAvatarChange} className="sr-only" />
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <label
+                htmlFor="avatar-upload"
+                className="cursor-pointer rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"
+              >
+                Choose photo
+              </label>
+              {avatar && (
+                <button
+                  type="button"
+                  onClick={() => { setAvatar(""); setAvatarFileName(""); }}
+                  className="rounded-lg border bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Remove photo
+                </button>
+              )}
+            </div>
+            <p className="mt-3 text-[11px] leading-relaxed text-gray-400">JPG, PNG or other image up to 5 MB · resized to 256×256 · max 300 KB</p>
+          </div>
+
+          <div className="space-y-4">
             <label className="block text-sm">
-              <span className="font-medium text-gray-700">Profile picture</span>
-              <input type="file" accept="image/*" onChange={onAvatarChange} className="mt-1 block text-xs text-gray-600" />
+              <span className="font-medium text-gray-700">Email</span>
+              <input
+                value={user.email}
+                readOnly
+                className="mt-1 w-full cursor-default rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-gray-600"
+              />
+              <span className="mt-1 block text-xs text-gray-400">Your email cannot be changed here.</span>
             </label>
-            {avatar && (
-              <button type="button" onClick={() => setAvatar("")} className="text-xs text-blue-600 hover:underline">
-                Remove photo
-              </button>
-            )}
+            <label className="block text-sm">
+              <span className="font-medium text-gray-700">Name <span className="font-normal text-gray-400">(optional)</span></span>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={80}
+                placeholder="Your name"
+                className="mt-1 w-full rounded-lg border px-3 py-2.5 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="font-medium text-gray-700">Phone number <span className="font-normal text-gray-400">(optional)</span></span>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                maxLength={32}
+                placeholder="+255 700 000 000"
+                className="mt-1 w-full rounded-lg border px-3 py-2.5 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
           </div>
-        </div>
 
-        <label className="block text-sm">
-          <span className="font-medium text-gray-700">Email</span>
-          <input value={user.email} readOnly className="mt-1 w-full rounded-lg border bg-gray-50 px-3 py-2 text-gray-600" />
-        </label>
-        <label className="block text-sm">
-          <span className="font-medium text-gray-700">Name (optional)</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={80}
-            placeholder="Your name"
-            className="mt-1 w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-400"
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="font-medium text-gray-700">Phone number (optional)</span>
-          <input
-            type="tel"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            maxLength={32}
-            placeholder="+255 700 000 000"
-            className="mt-1 w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-400"
-          />
-        </label>
-
-        {profileError && <p className="rounded-md border border-red-100 bg-red-50 p-3 text-sm text-red-700">{profileError}</p>}
-        {profileMsg && <p className="rounded-md border border-green-100 bg-green-50 p-3 text-sm text-green-700">{profileMsg}</p>}
-        <button
-          type="submit"
-          disabled={savingProfile}
-          className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {savingProfile ? "Saving..." : "Save profile"}
-        </button>
-      </form>
-
-      <form onSubmit={savePassword} className="space-y-4 rounded-2xl border bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-900">Change password</h2>
-        <label className="block text-sm">
-          <span className="font-medium text-gray-700">Current password</span>
-          <input
-            type="password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-            className="mt-1 w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-400"
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="font-medium text-gray-700">New password</span>
-          <input
-            type="password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            minLength={8}
-            autoComplete="new-password"
-            required
-            className="mt-1 w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-400"
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="font-medium text-gray-700">Confirm new password</span>
-          <input
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            minLength={8}
-            autoComplete="new-password"
-            required
-            className="mt-1 w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-400"
-          />
-        </label>
-        {passwordError && <p className="rounded-md border border-red-100 bg-red-50 p-3 text-sm text-red-700">{passwordError}</p>}
-        {passwordMsg && <p className="rounded-md border border-green-100 bg-green-50 p-3 text-sm text-green-700">{passwordMsg}</p>}
-        <div className="flex items-center gap-3">
+          {profileError && <p className="rounded-lg border border-red-100 bg-red-50 p-3 text-sm text-red-700">{profileError}</p>}
+          {profileMsg && <p className="rounded-lg border border-green-100 bg-green-50 p-3 text-sm text-green-700">{profileMsg}</p>}
           <button
             type="submit"
-            disabled={savingPassword}
-            className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            disabled={savingProfile}
+            className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
           >
-            {savingPassword ? "Changing..." : "Change password"}
+            {savingProfile ? "Saving..." : "Save profile"}
           </button>
-          <Link href="/" className="text-sm text-gray-600 hover:underline">Back to home</Link>
+        </form>
+
+        <div className="space-y-5">
+          <form onSubmit={savePassword} className="space-y-4 rounded-2xl border bg-white p-5 shadow-sm sm:p-6">
+            <div className="flex items-center gap-3 border-b border-gray-100 pb-4">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-lg" aria-hidden="true">🔒</span>
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Change password</h2>
+                <p className="text-xs text-gray-500">Keep your account secure.</p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block text-sm sm:col-span-2">
+                <span className="font-medium text-gray-700">Current password</span>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                  placeholder="Enter current password"
+                  className="mt-1 w-full rounded-lg border px-3 py-2.5 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="font-medium text-gray-700">New password</span>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  minLength={8}
+                  autoComplete="new-password"
+                  required
+                  placeholder="At least 8 characters"
+                  className="mt-1 w-full rounded-lg border px-3 py-2.5 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="font-medium text-gray-700">Confirm new password</span>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  minLength={8}
+                  autoComplete="new-password"
+                  required
+                  placeholder="Repeat new password"
+                  className="mt-1 w-full rounded-lg border px-3 py-2.5 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+            </div>
+
+            {passwordError && <p className="rounded-lg border border-red-100 bg-red-50 p-3 text-sm text-red-700">{passwordError}</p>}
+            {passwordMsg && <p className="rounded-lg border border-green-100 bg-green-50 p-3 text-sm text-green-700">{passwordMsg}</p>}
+            <button
+              type="submit"
+              disabled={savingPassword}
+              className="w-full rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {savingPassword ? "Changing..." : "Change password"}
+            </button>
+          </form>
+
+          <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+            <p className="text-sm font-semibold text-blue-900">Security tip</p>
+            <p className="mt-1 text-sm leading-relaxed text-blue-800/80">
+              Use a password you don&apos;t use elsewhere. Changing it signs out your other devices.
+            </p>
+          </div>
         </div>
-      </form>
+      </div>
     </div>
   );
 }
