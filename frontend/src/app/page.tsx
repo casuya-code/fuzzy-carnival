@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import InfoTip from "@/components/InfoTip";
+import { useAuth } from "@/components/AuthProvider";
 
 const tools = [
   {
@@ -61,6 +64,8 @@ const tools = [
 ];
 
 export default function Home() {
+  const { user, loading } = useAuth();
+
   return (
     <div className="space-y-6 py-2 sm:py-4">
       <section className="rounded-2xl border bg-white p-5 sm:p-7 shadow-sm">
@@ -74,6 +79,16 @@ export default function Home() {
           <span className="flex items-center justify-center rounded-full bg-emerald-50 px-2 sm:px-3 py-2 text-emerald-700 font-medium text-center">EN &amp; SW</span>
           <span className="flex items-center justify-center rounded-full bg-gray-100 px-2 sm:px-3 py-2 text-gray-700 font-medium text-center">Save &amp; download</span>
         </div>
+        {!loading && !user ? (
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link href="/signup" className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700">Create account</Link>
+            <Link href="/login" className="rounded-lg border px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">Log in</Link>
+          </div>
+        ) : !loading && user ? (
+          <div className="mt-5 rounded-lg bg-green-50 border border-green-100 px-4 py-3 text-sm text-green-800">
+            Signed in as <span className="font-medium">{user.email}</span>
+          </div>
+        ) : null}
       </section>
 
       <section className="space-y-3">

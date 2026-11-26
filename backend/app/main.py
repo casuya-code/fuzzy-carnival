@@ -22,7 +22,7 @@ from app.config import (
     SERVE_STATIC,
     TEMP_AUDIO_DIR,
 )
-from app.routers import captions, packaging, storage, synthesize, text, timeline, video
+from app.routers import auth, captions, packaging, storage, synthesize, text, timeline, video
 from app.schemas.tts import HealthResponse
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,12 @@ def _cleanup_temp_audio() -> None:
 async def lifespan(_: FastAPI):
     """Warm default engines in the background so the first request is fast."""
     try:
+        from app.services.user_store import init_db
+
+        init_db()
+    except Exception as e:
+        logger.warning("User DB init failed: %s", e, exc_info=True)
+    try:
         _cleanup_temp_audio()
     except Exception as e:
         logger.warning("Temp audio cleanup failed: %s", e, exc_info=True)
@@ -85,6 +91,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(synthesize.router)
 app.include_router(storage.router)
 app.include_router(text.router)

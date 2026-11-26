@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import InfoTip from "@/components/InfoTip";
+import { useAuth } from "@/components/AuthProvider";
 
 const NAV = [
   { href: "/", label: "Home", icon: "🏠", desc: "Start here" },
@@ -19,6 +20,7 @@ const NAV = [
 export default function Sidebar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const { user, loading, logout } = useAuth();
 
   useEffect(() => {
     setOpen(false);
@@ -95,9 +97,30 @@ export default function Sidebar() {
             })}
           </nav>
 
-          <div className="flex items-center gap-1.5 border-t p-4 text-xs text-gray-500">
-            <span className="font-medium text-gray-700">Tip</span>
-            <InfoTip text="Start with Speech, then add music, edit video, and captions." label="Workflow tip" placement="top" />
+          <div className="border-t p-4 space-y-3">
+            {!loading && user ? (
+              <div className="space-y-2">
+                <div className="text-xs text-gray-500">Signed in</div>
+                <div className="truncate text-sm font-medium text-gray-800" title={user.email}>{user.email}</div>
+                <button
+                  onClick={() => { logout(); setOpen(false); }}
+                  className="w-full rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Log out
+                </button>
+              </div>
+            ) : !loading ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Link href="/login" onClick={() => setOpen(false)} className="rounded-lg border px-3 py-2 text-center text-sm text-gray-700 hover:bg-gray-50">Log in</Link>
+                <Link href="/signup" onClick={() => setOpen(false)} className="rounded-lg bg-blue-600 px-3 py-2 text-center text-sm text-white hover:bg-blue-700">Sign up</Link>
+              </div>
+            ) : (
+              <div className="text-xs text-gray-500">Checking session...</div>
+            )}
+            <div className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className="font-medium text-gray-700">Tip</span>
+              <InfoTip text="Start with Speech, then add music, edit video, and captions." label="Workflow tip" placement="top" />
+            </div>
           </div>
         </div>
       </aside>

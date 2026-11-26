@@ -38,3 +38,8 @@ npm-debug.log*
 # IDE
 .vscode/
 .idea/
+# Local app data
+backend/data/
+*.db
+*.sqlite
+*.sqlite3

@@ -130,3 +130,20 @@ def test_local_media_fallback_guard(monkeypatch):
     monkeypatch.setattr(r2, "ALLOW_LOCAL_MEDIA_FALLBACK", False)
     with pytest.raises(RuntimeError):
         r2.public_url("outputs/demo.mp3")
+def test_signup_login_me(monkeypatch, tmp_path):
+    import app.services.user_store as us
+
+    monkeypatch.setattr(us, "APP_DB_PATH", str(tmp_path / "test.db"))
+    us.init_db()
+    r = client.post("/api/v1/auth/signup", json={"email": "test@example.com", "password": "password123"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["user"]["email"] == "test@example.com"
+    token = body["access_token"]
+    r2 = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert r2.status_code == 200
+    assert r2.json()["user"]["email"] == "test@example.com"
+    r3 = client.post("/api/v1/auth/login", json={"email": "test@example.com", "password": "password123"})
+    assert r3.status_code == 200
+    r4 = client.post("/api/v1/auth/login", json={"email": "test@example.com", "password": "wrongpass"})
+    assert r4.status_code == 401

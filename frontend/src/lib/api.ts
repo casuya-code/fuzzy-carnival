@@ -6,9 +6,64 @@ export const API_BASE = (
 ).replace(/\/+$/, "");
 
 const PUBLIC_API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+const USER_TOKEN_KEY = "yakodonyo_auth_token";
+
+export function getUserToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(USER_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setUserToken(token: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (token) localStorage.setItem(USER_TOKEN_KEY, token);
+    else localStorage.removeItem(USER_TOKEN_KEY);
+  } catch {}
+}
 
 export function backendAuthHeaders(): Record<string, string> {
+  const token = getUserToken();
+  if (token) return { Authorization: `Bearer ${token}` };
   return PUBLIC_API_KEY ? { Authorization: `Bearer ${PUBLIC_API_KEY}` } : {};
+}
+
+export interface AuthUser {
+  id: number;
+  email: string;
+}
+
+export async function signup(email: string, password: string): Promise<{ access_token: string; user: AuthUser }> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Signup failed (${res.status})`);
+  return res.json();
+}
+
+export async function login(email: string, password: string): Promise<{ access_token: string; user: AuthUser }> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Login failed (${res.status})`);
+  return res.json();
+}
+
+export async function me(): Promise<AuthUser> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/me`, {
+    headers: backendAuthHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Auth check failed (${res.status})`);
+  const data = await res.json();
+  return data.user as AuthUser;
 }
 
 export type Engine = "kyutai" | "afrispeech" | "msingi" | "mms" | "azure" | "elevenlabs";

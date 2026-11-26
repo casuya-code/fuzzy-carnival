@@ -16,6 +16,7 @@ import os
 from fastapi import Header, HTTPException
 
 from app.config import API_KEY, REQUIRE_AUTH
+from app.services.user_store import verify_access_token
 
 
 def _configured_keys() -> list[str]:
@@ -40,21 +41,29 @@ def require_api_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> None:
     keys = _configured_keys()
-    if not keys:
-        if REQUIRE_AUTH:
-            raise HTTPException(status_code=503, detail="API authentication is required but not configured")
+    provided_api = x_api_key.strip() if x_api_key else None
+    provided_bearer = None
+    if authorization and authorization.lower().startswith("bearer "):
+        provided_bearer = authorization[7:].strip()
+
+    # API key takes precedence when present.
+    if provided_api:
+        for key in keys:
+            if hmac.compare_digest(provided_api, key):
+                return
+        # Also allow a user token passed via X-API-Key by mistake? No, be strict.
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    if provided_bearer:
+        for key in keys:
+            if hmac.compare_digest(provided_bearer, key):
+                return
+        if verify_access_token(provided_bearer):
+            return
+        if keys or REQUIRE_AUTH:
+            raise HTTPException(status_code=401, detail="Invalid or expired credentials")
         return
 
-    provided = None
-    if x_api_key:
-        provided = x_api_key.strip()
-    elif authorization and authorization.lower().startswith("bearer "):
-        provided = authorization[7:].strip()
-
-    if not provided:
-        raise HTTPException(status_code=401, detail="Missing API key")
-
-    for key in keys:
-        if hmac.compare_digest(provided, key):
-            return
-    raise HTTPException(status_code=401, detail="Invalid API key")
+    if keys or REQUIRE_AUTH:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return

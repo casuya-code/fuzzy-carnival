@@ -120,6 +120,8 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("
 # Set REQUIRE_AUTH=true to fail closed when no key is configured.
 API_KEY = os.getenv("API_KEY", "").strip()
 REQUIRE_AUTH = _env_bool("REQUIRE_AUTH", False)
+AUTH_SECRET = os.getenv("AUTH_SECRET", "dev-insecure-change-me").strip() or "dev-insecure-change-me"
+AUTH_TOKEN_TTL_HOURS = _env_int("AUTH_TOKEN_TTL_HOURS", 168, min_value=1, max_value=24 * 30)
 MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 25, min_value=1, max_value=500)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 SERVE_STATIC = _env_bool("SERVE_STATIC", True)
@@ -128,6 +130,7 @@ EXPOSE_HEALTH_DETAILS = _env_bool("EXPOSE_HEALTH_DETAILS", False)
 ALLOW_LOCAL_MEDIA_FALLBACK = _env_bool("ALLOW_LOCAL_MEDIA_FALLBACK", True)
 REF_CACHE_MAX_FILES = _env_int("REF_CACHE_MAX_FILES", 128, min_value=8)
 REF_CACHE_MAX_AGE_HOURS = _env_int("REF_CACHE_MAX_AGE_HOURS", 72, min_value=1)
+APP_DB_PATH = os.getenv("APP_DB_PATH", str(BASE_DIR / "data" / "app.db"))
 
 # --- Memory guard -----------------------------------------------------------------
 # Railway $5 = ~8GB; keep headroom by unloading heavy engines before loading another.
