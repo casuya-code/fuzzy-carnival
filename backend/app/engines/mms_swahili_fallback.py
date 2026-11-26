@@ -1,5 +1,4 @@
 import os
-import torch
 from app.config import TEMP_AUDIO_DIR, WEIGHTS_DIR, HF_TOKEN, MMS_MODEL_ID
 from app.engines.base import BaseTTSEngine
 
@@ -20,9 +19,10 @@ class MmsSwahiliFallbackEngine(BaseTTSEngine):
         if self.is_loaded:
             return
         try:
+            import torch
             from transformers import VitsModel, AutoTokenizer
         except ImportError as e:
-            raise RuntimeError(f"transformers not installed: {e}")
+            raise RuntimeError(f"transformers/torch not installed: {e}")
 
         if HF_TOKEN:
             os.environ.setdefault("HF_TOKEN", HF_TOKEN)
@@ -39,6 +39,8 @@ class MmsSwahiliFallbackEngine(BaseTTSEngine):
         self._loaded = True
 
     def unload(self) -> None:
+        import torch
+
         self.model = None
         self.tokenizer = None
         self._loaded = False
@@ -53,6 +55,8 @@ class MmsSwahiliFallbackEngine(BaseTTSEngine):
         speaking_rate=None,
     ) -> str:
         self.ensure_loaded()
+        import torch
+
         import numpy as np
         from scipy.io import wavfile
 
