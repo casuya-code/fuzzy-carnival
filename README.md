@@ -1,228 +1,217 @@
-# Bilingual Voice Clone Platform
+# Yakodonyo Studio
 
-Clone voices in **English** and **Swahili** using six TTS engines, deployed on
-**Vercel (free)** + **Railway ($5 Pro)** + **Cloudflare R2 (free)**.
+Clone voices and produce short-form video in **English** and **Swahili** from one
+browser app: generate speech, mix audio, trim and zoom video, burn karaoke
+captions, and publish a YouTube-ready package — with cloud and local TTS engines,
+Cloudflare R2 storage, and a FastAPI backend.
 
-## Engines
+![Yakodonyo Studio home screen](docs/screenshots/home.jpeg)
 
-| Engine option | Best use case | Cost / quota (typical) | RAM on Railway | Cloning | Notes |
-|---|---|---|---|---|---|
-| **Azure AI Speech** (`azure`, sw-TZ Daudi/Rehema) | Default Swahili storytelling, documentaries, narration | F0: 500k chars/mo free (plan-dependent) | 0 MB (cloud REST) | No (preset neural voices) | Auto-falls back to MMS on HTTP 429 quota/rate limit; commercial rights per Azure terms |
-| **Kyutai Pocket TTS** (`kyutai`) | Unlimited English custom voice cloning from short sample | Included in your container | ~1.0 GB (CPU) | Zero-shot | Local/open weights |
-| **AfriSpeech Pocket** (`afrispeech`) | African-accented English cloning from short sample | Included in your container | ~1.0 GB (CPU) | Zero-shot | Uses a community PocketTTS checkpoint via `AFRISPEECH_CONFIG`, otherwise the base Kyutai model |
-| **ElevenLabs** (`elevenlabs`) | Dramatic character voices & short hooks (EN/SW accents) | Free tier limited (plan-dependent); paid unlocks more | 0 MB (cloud REST) | Preset voice, or IVC when `ELEVENLABS_ENABLE_CLONING=true` and your plan allows it | Uses `eleven_flash_v2_5` by default to stretch quota |
-| **Msingi-AI Sauti / XTTS-v2** (`msingi`) | Self-hosted Swahili voice cloning (when cloud unavailable/quota used) | Included in your container | ~3.5 GB (loaded on demand) | Zero-shot | Uses base XTTS-v2 unless `MSINGI_CHECKPOINT_PATH` points to a fine-tuned checkpoint. Base XTTS has no `sw` token, so Swahili uses a safe tokenizer fallback with a UI warning |
-| **Meta MMS-TTS** (`mms`) | Offline/low-cost Swahili fallback | Included in your container | ~0.5 GB | No | Sentence/chunked delivery with punctuation-aware breaths + adjustable pace; checkpoint swappable via `MMS_MODEL_ID` |
+## At a glance
 
-**Routing & safety rules**
-- Text is normalized before synthesis (Swahili uses `kiswahili-text-normalizer` when available, custom loanwords from `backend/app/data/swahili_loanwords.json` or `SWAHILI_LOANWORDS_PATH`, then number/punctuation normalization). Raw text should be used for captions.
-- If `azure` returns HTTP 429, the backend automatically falls back to `mms` for that request and returns a UI warning.
-- `msingi` auto-detects the loaded checkpoint's languages. Stock XTTS-v2 does not include Swahili (`sw`), so it uses a supported tokenizer token (normally `en`) while still cloning your sample, and returns a UI warning. Point `MSINGI_CHECKPOINT_PATH` at a Swahili-aware checkpoint to use the native `sw` token; `MSINGI_LANGUAGE=auto` is the default and can be overridden in `backend/.env`.
-- `COQUI_TOS_AGREED=1` is set automatically for unattended/server use; make sure your Coqui/XTTS/CPML usage complies with the applicable license terms.
-- Cloud engines run over HTTPS and do not load PyTorch/XTTS weights into RAM (zero local model RAM for Azure/ElevenLabs).
+| | |
+|---|---|
+| **Frontend** | Next.js 14 · TypeScript · React 18 · Tailwind CSS (`frontend/`) |
+| **Backend** | FastAPI · Python 3.11 · SQLite accounts (`backend/`) |
+| **Storage** | Cloudflare R2 via presigned URLs, with local `/static` fallback |
+| **TTS engines** | Azure AI Speech, ElevenLabs, Kyutai Pocket TTS, AfriSpeech Pocket, Msingi/XTTS-v2, Meta MMS |
+| **Accounts** | Email/password signup & login, signed bearer tokens, protected feature pages, profile and password settings |
+| **Hosting** | Vercel (frontend) + Railway ~$5 Pro (backend) + R2 free tier |
+| **CI** | Backend compile + pytest, frontend lint + Vitest + production build on every push/PR |
 
-**Swahili delivery (pauses, breaths, pace)**
-- Meta MMS-TTS is a single-pass VITS vocoder: it reads straight through a paragraph with no natural breaths. The backend compensates by splitting long text at sentence/clause boundaries, synthesizing each segment, then stitching silence that follows the punctuation:
-  - `.` → 480 ms, `!` → 500 ms, `?` → 560 ms (a real breath)
-  - `,` → 180 ms, `;` → 240 ms, `:` → 260 ms (a short catch)
-  - long segments also break at commas so a 60-word sentence never becomes a sprint
-- **`speaking_rate`** (request field + "Speaking pace" slider, 0.7–1.4): applied by **Azure Swahili** (SSML prosody rate) and **Basic Swahili / MMS** (VITS `speaking_rate`). Other engines currently keep their natural pace and the API returns a warning when a non-neutral pace is requested.
-- Swahili text without a trailing `.` is force-terminated, and `;`/`:` are rewritten, so passages don't run on.
-- **Swap the checkpoint** with `MMS_MODEL_ID` (any VITS/MMS repo with its own tokenizer). Benchmarked on a 4-sentence Swahili passage:
-
-  | `MMS_MODEL_ID` | Voiced | Peak | License |
-  |---|---|---|---|
-  | `facebook/mms-tts-swh` (default) | 68% | 0.73 | CC-BY-NC |
-  | `stano03/jambogpt-swahili-tts-v1` | 74% | 0.80 | Apache-2.0 |
-  | `mussacharles60/swahili-tts-female-voice` | 77% | 0.82 | MIT |
-
-  Weights are cached per model under `backend/weights/mms/<model>/`, so switching never mixes checkpoints.
-
-## Architecture
-
-- `frontend/` — Next.js 14 app deployed to Vercel. Records reference clips,
-  uploads them directly to R2 via presigned URLs, calls Railway backend.
-- `backend/` — FastAPI app deployed to Railway. Lazy-loads/swaps models to
-  stay under the $5 container RAM limit, normalizes text & audio, stores
-  outputs in R2.
-- Cloudflare R2 — S3-compatible object storage for reference + generated audio/video.
-
-## Tools (sidebar)
+## Features
 
 | Tool | Route | What it does |
 |---|---|---|
-| Text-to-Speech | `/text-to-speech` | Clean, noise-reduced voice cloning (EN/SW) with previews, variations & rendered exports. |
-| Speech-and-Background | `/speech-and-background` | 3-layer mix: L1 voice, L2 ambient (steady), L3 music (sidechain-ducked) → loudnorm ~−14 LUFS. Voice-only mastering supported. |
-| Trimming & Zooming | `/trimming-and-zooming` | Trim AI warp tails (`ffprobe`+`-t`), 2.5s `zoompan` punch-in, stitch clips, mux unified audio. |
-| Animated Captions | `/animated-captions` | Karaoke-style word-by-word ASS captions burned with libass, locked into 9:16/1:1/16:9 safe zones. |
-| Publish Package | `/publish-package` | Auto-designed YouTube thumbnail + 3 center-cropped 9:16 Shorts → 5 ready-to-post files in R2. |
+| Text-to-Speech | `/text-to-speech` | Clean, noise-reduced voice cloning (EN/SW), previews, variations, export |
+| Mix Audio | `/speech-and-background` | Three-layer mix (voice + ambient + music) with ducking and mastering |
+| Edit Video | `/trimming-and-zooming` | Trim warp tails, gentle zoom, stitch clips, mux unified audio |
+| Captions | `/animated-captions` | Word-by-word karaoke captions, 9:16/1:1/16:9 safe zones, burned in one FFmpeg pass |
+| Publish Package | `/publish-package` | Auto-designed thumbnail + three 9:16 Shorts → five ready-to-post files |
+| Profile | `/profile` | View email, add optional name/phone/avatar, change password |
+| Help | `/instruction-manual` | Public, no account required |
 
-### Animated Captions (how it works)
+Public pages (`/`, `/instruction-manual`, `/login`, `/signup`, `/reset-password`)
+can be browsed without an account; all creation tools require sign-in. The home
+card also shows a live count of registered accounts (aggregate only).
 
-The website already knows the exact narration script and the 1.5s intro music
-delay, so word timings need **no extra AI model and no extra RAM**:
+The full engine comparison and Swahili delivery notes live in
+[docs/ENGINES.md](docs/ENGINES.md).
 
+## Architecture
+
+```text
+ Browser (Next.js / TypeScript)
+   ├── public pages + RequireAuth-gated tools
+   ├── direct presigned uploads to Cloudflare R2
+   └── REST calls ──► Railway (FastAPI / Python)
+                        ├── auth: PBKDF2 users, HMAC bearer tokens, SQLite
+                        ├── engines: Azure / ElevenLabs / local TTS models
+                        ├── processors: audio, video, captions, packaging
+                        └── storage: R2 client + local /static fallback
 ```
-tᵢ = t₀ + (Σⱼ<ᵢ wⱼ / Σw) · Tᵥ        wᵢ = chars(word) + punctuation pauses
-ASS (DejaVu Sans Bold, Outline=5) → FFmpeg libass → MP4
-```
 
-- `backend/app/services/captions_processor.py` generates the `.ass` file with
-  active-word highlighting (`{\c&H00FFFF&}` yellow, surrounding words white) in
-  punchy 3-word chunks. Character-weighted timing gives short words (e.g. "na")
-  proportionally less time than long ones (e.g. "Kilimanjaro").
-- 9:16 safe zones use `MarginV=520`, `MarginL=90`, `MarginR=160` so captions
-  clear the bottom platform UI and the right like/share button column.
-- Video can come from the device file manager, from a previous Trimming &
-  Zooming result (handed off via `videoHistory`), or be built fresh from clips.
-- For fresh clips, captions are generated **before** the final merge and burned
-  in the **same** FFmpeg pass as the audio mux — no double video encode.
-- Dockerfile installs `fonts-dejavu-core` + `fonts-liberation` so libass renders
-  crisp bold typography on the $5 Railway CPU container.
+| Directory | Responsibility |
+|---|---|
+| `frontend/src/app` | App-router pages and API route `/api/upload-url` |
+| `frontend/src/components` | `AuthProvider`, `RequireAuth`, sidebar, shared UI |
+| `frontend/src/lib` | API client, token storage, types |
+| `backend/app/routers` | HTTP endpoints (`auth`, `synthesize`, `audio`, `video`, `captions`, `packaging`, …) |
+| `backend/app/engines` | TTS provider adapters with a common base class |
+| `backend/app/services` | Model manager, audio/video/caption processors, user store, storage |
+| `backend/app/data` | Swahili normalization data |
+| `scripts` | Dev-server watchdog |
+| `docs` | Engine reference and screenshots |
 
-### Publish Package (thumbnail + 3 Shorts)
-
-`backend/app/services/packaging_processor.py` replaces manual Canva/CapCut work
-using only FFmpeg, Pillow and OpenCV (headless) — minimal RAM on the CPU container:
-
-1. **Best frame:** sample frames with FFmpeg, keep the sharpest via OpenCV
-   variance-of-Laplacian (Pillow edge-energy fallback), then boost contrast/saturation.
-2. **Readability:** dark gradient overlay (left or bottom) + optional 8px accent border.
-3. **3-word hook:** first two words white with heavy shadow, power word in a yellow/
-   red/white rounded badge.
-4. **3 Shorts:** center-crop `crop=ih*9/16:ih`, scale to 1080×1920, slice at requested start times (UI auto-fits to master length), overlay a top hook banner (`PART i: PHASE`) for the first 5s.
-
-`POST /api/v1/packaging/publish` uploads the 5 deliverables: master video, `youtube_thumbnail.jpg`, and 3 `short_part_*_9x16.mp4` files. The backend clamps short start/length to the actual master duration to avoid empty/broken shorts. Optional master export can apply loudnorm and an aspect-matched 2K upscale (16:9 → 2560×1440, 9:16 → 1440×2560, 1:1 → 1440×1440). `POST /api/v1/packaging/thumbnail` generates just the thumbnail for a fast preview.
+Request flow: the browser uploads reference media straight to R2, sends text and
+object keys to the backend, and polls/receives output URLs. Without R2
+credentials, uploads use `PUT /api/v1/local-upload/{key}` and outputs are served
+from the backend's `/static` mount.
 
 ## Prerequisites
 
-- Node.js 18+, Python 3.11 (backend targets 3.11; Coqui TTS for Msingi requires <3.12)
-- ffmpeg installed locally (`ffmpeg -version`) with `libx264`, `aac`, `libmp3lame`
-  and `libass`; a DejaVu/Liberation font for caption/thumbnail rendering (the
-  Railway image installs these via apt)
-- Pillow + opencv-python-headless (in `requirements.txt`) for thumbnail design
-- A Cloudflare account (R2 bucket)
-- A Hugging Face token with access to gated Kyutai weights
-- Railway account ($5 Pro) and Vercel account (free hobby)
+- **Node.js 18+** and npm (frontend)
+- **Python 3.11** (backend; Coqui/XTTS needs <3.12)
+- **FFmpeg** with `libx264`, `aac`, `libmp3lame`, `libass` and a DejaVu/Liberation
+  font for captions and thumbnails
+- **Cloudflare R2** bucket (optional locally; required in production)
+- **Hugging Face token** with access to gated Kyutai weights (local cloning engines)
+- Optional cloud keys: Azure Speech, ElevenLabs
+- Optional hosting: Railway and Vercel accounts
 
-## 1. Cloudflare R2 setup
-
-1. Create an R2 bucket named `voice-clone-audio`.
-2. Create an R2 API token with Object Read/Write.
-3. Note: Account ID, Access Key ID, Secret Access Key, and the public bucket URL
-   (enable public access or use presigned URLs).
-
-## 2. Backend (Railway)
-
-### Local dev
+## Quick start (local)
 
 ```bash
+git clone https://github.com/casuya-code/fuzzy-carnival.git
+cd fuzzy-carnival
+
+# Backend — terminal 1
 cd backend
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # fill in values
-uvicorn app.main:app --reload --port 8000
+cp .env.example .env          # fill in the values you need
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
-### Deploy to Railway
-
-1. Install Railway CLI: `npm i -g @railway/cli`
-2. `railway login`
-3. `railway init` (create project)
-4. `railway up` (deploys using Dockerfile)
-5. Set environment variables in Railway dashboard (from `backend/.env.example`),
-   including `HF_TOKEN`, R2 credentials, and explicit `ALLOWED_ORIGINS`
-   (your Vercel URL). For production, also set `API_KEY` (and optionally
-   `REQUIRE_AUTH=true`), keep `EXPOSE_HEALTH_DETAILS=false`, and configure
-   `MAX_UPLOAD_MB` / rate limits as needed. Optional cloud TTS keys:
-   `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, `AZURE_SWAHILI_VOICE`,
-   `ELEVENLABS_API_KEY`, `ELEVENLABS_MODEL_ID`, `ELEVENLABS_DEFAULT_VOICE_ID`,
-   `ELEVENLABS_ENABLE_CLONING`.
-6. Railway will use `railway.toml` for healthcheck (`/health`) and restart
-   policy. **Sleep mode** is enabled (`sleepApplication = true`) so the
-   service sleeps when idle and wakes on the next request — saving the $5
-   budget. The frontend header pings the backend `/health` endpoint to report
-   wake-up status. Cloud engines (Azure/ElevenLabs) keep local RAM usage near-zero.
-
-### Pre-fetch weights (optional, recommended for faster cold starts)
-
 ```bash
-cd backend
-python scripts/download_weights.py
-```
-
-Weights are gitignored. The Dockerfile prefetches weights at build time. If gated Hugging Face models are needed during build, pass a BuildKit secret instead of a build arg/env: `docker build --secret id=hf_token,env=HF_TOKEN ...` (or `src=...`). Outside Docker, run the script manually before deploying (or let models download on first request).
-
-## 3. Frontend (Vercel)
-
-```bash
+# Frontend — terminal 2
 cd frontend
-npm install
-cp .env.local.example .env.local  # fill in R2 + Railway URL
+npm ci
+cp .env.local.example .env.local   # set NEXT_PUBLIC_RAILWAY_API_URL
 npm run dev
 ```
 
-Deploy:
+Open <http://localhost:3000> and <http://127.0.0.1:8000/health>. Create an
+account at `/signup`, then pick a tool from the sidebar. On Windows you can keep
+both servers alive with the watchdog (see [Development](#development)).
 
-```bash
-cd frontend
-npx vercel
-```
+## Commands
 
-Set env vars in Vercel dashboard: `R2_*` and `NEXT_PUBLIC_RAILWAY_API_URL`.
+| Task | Command | Directory |
+|---|---|---|
+| Run API | `python -m uvicorn app.main:app --reload --port 8000` | `backend` |
+| Compile backend | `python -m compileall app tests` | `backend` |
+| Backend tests | `python -m pytest -q` | `backend` |
+| Run frontend | `npm run dev` | `frontend` |
+| Lint frontend | `npm run lint -- --no-cache` | `frontend` |
+| Frontend tests | `npm test` | `frontend` |
+| Production build | `npm run build` | `frontend` |
+| Serve production build | `npm run start` | `frontend` |
+| Dev watchdog (Windows) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-watch.ps1 -Force` | repo root |
+| Watchdog status | `... -File scripts\dev-watch.ps1 -Status` | repo root |
 
-## 4. Usage
+## Configuration
 
-1. Open the Vercel app.
-2. Record a 10–15s clean, single-speaker reference clip (denoise is on by default) for local cloning engines that need it.
-3. Pick language (🇬🇧 English / 🇹🇿 Swahili) and engine:
-   - **Swahili:** Azure AI Speech (default/premium neural) · Msingi/XTTS (self-hosted clone) · MMS (fallback) · ElevenLabs (hooks/character)
-   - **English:** Kyutai/Fluent (clone) · AfriSpeech (accent clone) · ElevenLabs (hooks/character)
-4. Type text (normalized for TTS automatically; keep raw script for captions), generate speech, then preview/save or render a speed+gain export. If Azure quota is exceeded, the app falls back to MMS and shows a warning.
-5. In **Speech-and-Background**, stack the voice with ambient (L2) and/or music
-   (L3), apply a preset, and export a mastered track (also saved to history).
-6. In **Trimming & Zooming**, add ordered clips, set trim/aspect, pick the unified
-   audio (upload or history), and export the stitched video.
-7. In **Animated Captions**, pick that video (or upload your own), paste the exact
-   script, preview timings, and burn karaoke captions; download the MP4 + `.ass`.
-8. In **Publish Package**, pick the finished master, set the 3-word hook and accent,
-   auto-fit the 3 Shorts, preview the thumbnail, then publish all 5 files.
+Copy the example files and fill only what you need:
+[`backend/.env.example`](backend/.env.example) and
+[`frontend/.env.local.example`](frontend/.env.local.example). Never commit the
+copies — `.gitignore` excludes them.
 
-## API endpoints (Railway)
+### Backend
 
-- `POST /api/v1/synthesize`, `/normalize`, `/warm`
-- `POST /api/v1/mix` (3-layer), `/audio/transform`, `/audio/analyze`, `/audio/bpm`
-- `POST /api/v1/video/process` (optional `script_text` → captions in single pass)
-- `POST /api/v1/video/process-batch` (batch clip processing), `POST /api/v1/video/finalize`
-- `POST /api/v1/timeline` (forced alignment with estimated fallback)
-- `POST /api/v1/captions/preview`, `POST /api/v1/captions/burn`
-- `POST /api/v1/packaging/thumbnail`, `POST /api/v1/packaging/publish`
+| Group | Variables | Purpose |
+|---|---|---|
+| Auth | `API_KEY`, `REQUIRE_AUTH`, `AUTH_SECRET`, `AUTH_TOKEN_TTL_HOURS`, `APP_DB_PATH` | API key gate, signed user tokens, SQLite account DB location |
+| Auth extras | `EXPOSE_RESET_TOKENS`, `EXPOSE_HEALTH_DETAILS`, `SMTP_*` | Password resets, health detail visibility |
+| CORS | `ALLOWED_ORIGINS`, `CORS_ORIGIN_REGEX` | Explicit browser origins; localhost-only by default |
+| Uploads | `MAX_UPLOAD_MB`, `SERVE_STATIC`, `PUBLIC_BASE_URL`, `ALLOW_LOCAL_MEDIA_FALLBACK`, `UPLOAD_SCAN_URL` | Size limits, output URLs, optional AV scan webhook |
+| R2 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL` | Object storage; omit for local fallback |
+| Models | `HF_TOKEN`, `HF_HUB_CACHE`, `ENABLE_*`, `MMS_MODEL_ID`, `MSINGI_CHECKPOINT_PATH` | Gated weights, engine flags, checkpoints |
+| Cloud TTS | `AZURE_SPEECH_*`, `ELEVENLABS_*` | Provider credentials and voice/model defaults |
+| Limits | `REDIS_URL`, `RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_BURST`, `REF_CACHE_*` | Shared (Redis) or process-local rate limits; reference cache |
 
-## Local dev without R2
+### Frontend
 
-When R2 credentials are absent, outputs are served from the backend's `/static`
-mount at their full key path (e.g. `http://127.0.0.1:8000/static/audio/20261120/...`);
-older flat `outputs/<basename>` artifacts remain readable. Local uploads use
-`PUT /api/v1/local-upload/{key}`. Ensure FFmpeg (incl. `C:\Users\Admin\ffmpeg` on
-Windows) is on the backend process PATH.
+| Variable | Purpose |
+|---|---|
+| `NEXT_PUBLIC_RAILWAY_API_URL` | Backend base URL (default `http://127.0.0.1:8000`) |
+| `NEXT_PUBLIC_API_KEY` | Optional API key sent by the browser — **publicly visible**, prefer a server proxy in production |
+| `R2_*` | Credentials for direct presigned uploads from the browser |
 
-### Keep both dev servers running (Windows)
+## API overview
 
-`scripts/dev-watch.ps1` keeps the frontend (`http://localhost:3000`) and backend
-(`http://127.0.0.1:8000`) alive. Run it once to start anything that is down:
+| Area | Endpoints |
+|---|---|
+| Accounts | `POST /api/v1/auth/signup`, `/login`, `/profile`, `/change-password`, `/logout-all`, `/password-reset/request`, `/password-reset/confirm`; `GET /me`, `/stats` |
+| Speech | `POST /api/v1/synthesize`, `/normalize`, `/warm` |
+| Audio | `POST /api/v1/mix`, `/audio/transform`, `/audio/analyze`, `/audio/bpm`, `/audio/sfx`, `/fonts/upload` |
+| Video | `POST /api/v1/video/process`, `/video/process-batch`, `/video/finalize` |
+| Captions | `POST /api/v1/captions/preview`, `/captions/burn`, `POST /api/v1/timeline` |
+| Packaging | `POST /api/v1/packaging/thumbnail`, `/packaging/publish` |
+| Health/static | `GET /health`, `GET /static/...`, `PUT /api/v1/local-upload/{key}` |
+
+Full interactive docs are available at `http://127.0.0.1:8000/docs` when the API
+is running.
+
+## Deployment
+
+### Railway (backend)
+
+1. `npm i -g @railway/cli` → `railway login` → `railway init` → `railway up`
+   (uses the repository Dockerfile).
+2. Set backend env vars in the Railway dashboard, especially `API_KEY`,
+   `REQUIRE_AUTH=true`, `AUTH_SECRET`, `ALLOWED_ORIGINS` (your Vercel URL),
+   R2 credentials and any TTS keys. Keep `EXPOSE_HEALTH_DETAILS=false`.
+3. `railway.toml` defines the `/health` healthcheck and restart policy. Sleep
+   mode is enabled to save cost; the first request after inactivity cold-starts
+   the service. The frontend shows a "waking up" indicator via `/health`.
+4. Optional: prefetch weights with `python scripts/download_weights.py` before
+   deploying (the Dockerfile also prefetches at build time).
+
+### Vercel (frontend)
+
+1. `cd frontend && npx vercel`, or connect the repo in the Vercel dashboard.
+2. Set `NEXT_PUBLIC_RAILWAY_API_URL` and the `R2_*` variables in Vercel.
+3. Add the deployed URL to backend `ALLOWED_ORIGINS` (or `CORS_ORIGIN_REGEX`).
+
+## Example workflow: Swahili narration to Shorts
+
+1. Record a clean 10–15s single-speaker reference clip (denoising is on by default).
+2. Pick **🇹🇿 Swahili** and an engine — Azure for neural narration, Msingi/MMS
+   when you need offline fallback, ElevenLabs for hooks.
+3. Type the script, generate speech, preview and save the mastered audio.
+4. In **Speech-and-Background**, add ambient/music layers and export the mix.
+5. In **Trimming & Zooming**, add clips, set trim/aspect, attach the audio, export.
+6. In **Animated Captions**, paste the exact script and burn karaoke captions.
+7. In **Publish Package**, set a 3-word hook, preview the thumbnail and publish
+   the master + thumbnail + three Shorts.
+
+## Development
+
+### Keep both servers running (Windows)
+
+`scripts/dev-watch.ps1` starts anything that is down; use `-Force` to restart
+both after dependency/config changes, and `-Status` to print PIDs:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-watch.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-watch.ps1 -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-watch.ps1 -Status
 ```
 
-Use `-Force` to restart both servers immediately (e.g. after dependency or
-config changes), and `-Status` to print their PIDs. Normal source edits are
-picked up automatically by Next dev and `uvicorn --reload`.
-
-To keep them running automatically, register a per-minute scheduled task for
-the current user:
+To register it as a per-minute scheduled task:
 
 ```powershell
 $script = "C:\Users\Admin\Desktop\yakodonyo\scripts\dev-watch.ps1"
@@ -230,49 +219,39 @@ $tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Fi
 schtasks /Create /TN "Yakodonyo Dev Watch" /TR $tr /SC MINUTE /MO 1 /F
 ```
 
-Logs: `%TEMP%\yakodonyo-dev-watch.log` plus the per-server `*-dev*.log` files.
+Logs: `%TEMP%\yakodonyo-dev-watch.log` and the per-server `*-dev*.log` files.
+Normal source edits hot-reload automatically.
 
 ### Accounts and profile
 
-Public pages (`/`, `/instruction-manual`, `/login`, `/signup`, `/reset-password`)
-are browsable without an account; feature pages require login. Signed-in users
-can open **Profile** in the sidebar footer to view their email, optionally add
-a name, phone number and profile picture, and change their password. Profile
-data is stored in the backend SQLite database (`APP_DB_PATH`). Changing the
-password revokes older sessions and returns a fresh token for the current one.
-`GET /api/v1/auth/stats` returns the public aggregate registered-user count
-shown in the home card (no personal data). Profile pictures are resized to
-256×256 and capped at 300 KB.
+Feature pages require login; public pages do not. Signed-in users can open
+**Profile** in the sidebar footer to view their email, optionally add a name,
+phone number and profile picture, and change their password. Profile data is
+stored in the backend SQLite database (`APP_DB_PATH`). Password changes revoke
+older sessions and return a fresh token for the current session. Uploaded images
+are center-cropped to 256×256, capped at 300 KB; the input file limit is 5 MB.
 
-## Memory management
+## Troubleshooting
 
-`backend/app/services/model_manager.py` keeps Kyutai Pocket TTS warm by
-default and unloads it (freeing RAM) only when a heavy Msingi-AI Sauti
-request arrives, keeping the container under the Railway RAM limit.
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'app'` during pytest | Pytest invoked from the wrong directory | Run `python -m pytest -q` from `backend/` (CI also sets `PYTHONPATH`) |
+| Missing `elevenlabs` or `torch` on CI | Heavy dependencies not needed for collection | CI installs `elevenlabs`; `torch` is imported lazily in the MMS engine |
+| Feature page says "Account required" | No active session, or `REQUIRE_AUTH=true` without a token | Log in at `/login`; check `AUTH_SECRET` and token expiry |
+| Browser shows CORS error | Origin not allowed | Add the exact frontend URL to `ALLOWED_ORIGINS` (or set `CORS_ORIGIN_REGEX`) |
+| Uploads fail / no output URL | Missing R2 credentials or FFmpeg not on PATH | Fill `R2_*`, or use the local fallback; verify `ffmpeg -version` |
+| First request is slow | Railway sleep-mode cold start | Wait for `/health` to report ready; the UI shows a waking-up indicator |
+| Avatar rejected as too large | Stored image exceeds cap | Choose a smaller image; the app resizes and recompresses to ≤300 KB |
+| Dev servers not responding | Processes stopped | Run the watchdog with `-Force`; check logs in `%TEMP%` |
 
-## Text normalization
+## Support and contributing
 
-`backend/app/services/text_normalizer.py` converts digits to spoken words
-(e.g. `10` → `ten` for English, `kumi` for Swahili) and expands common
-abbreviations before synthesis.
-
-## Sleep mode note
-
-Railway sleeps the backend after inactivity. The first request after sleep
-triggers a cold start (model reload). The frontend shows a "waking up"
-indicator via the backend `/health` endpoint. Keep reference clips short to
-reduce latency.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the branching model, Conventional
-Commit format, PR checklist, issue templates and release tagging. In short:
-branch off `main` as `feature/...` or `fix/...`, keep commits conventional, run
-`python -m pytest -q` in `backend/` plus lint/test/build in `frontend/`, and
-open a PR using `.github/PULL_REQUEST_TEMPLATE.md`. Required CI checks are
-`backend` and `frontend`; dependency audits are report-only. Branch protection
-on `main` still needs a one-time maintainer setup — see CONTRIBUTING.md.
+- **Questions/bugs:** open an issue using the bug report or feature request
+  template in [`.github/ISSUE_TEMPLATE`](.github/ISSUE_TEMPLATE).
+- **Security:** report privately per [SECURITY.md](SECURITY.md), not in a public issue.
+- **Contributing:** read [CONTRIBUTING.md](CONTRIBUTING.md) for the branching
+  model, Conventional Commits, PR checklist and required CI checks.
 
 ## License
 
-MIT
+[MIT](LICENSE). Copyright (c) 2026 casuya-code.
