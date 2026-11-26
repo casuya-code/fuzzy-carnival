@@ -1,5 +1,7 @@
 "use client";
 
+import RequireAuth from "@/components/RequireAuth";
+
 import { useEffect, useState } from "react";
 import {
   checkHealth,
@@ -195,6 +197,7 @@ export default function TextToSpeechPage() {
   const activeAudioUrl = result?.audio_url;
 
   return (
+    <RequireAuth>
     <div className="space-y-6 pb-10">
       <header className="rounded-xl border bg-white p-4 sm:p-6 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -321,5 +324,6 @@ export default function TextToSpeechPage() {
         </div>
       </div>
     </div>
+    </RequireAuth>
   );
 }

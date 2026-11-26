@@ -1,21 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 
-export default function LoginPage() {
+function LoginInner() {
   const { user, loading, login } = useAuth();
   const router = useRouter();
+  const sp = useSearchParams();
+  const next = sp.get("next") || "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!loading && user) router.replace("/");
-  }, [loading, user, router]);
+    if (!loading && user) router.replace(next);
+  }, [loading, user, router, next]);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -23,7 +25,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.replace("/");
+      router.replace(next);
     } catch (err: any) {
       setError(err?.message || "Login failed");
     } finally {
@@ -78,4 +80,8 @@ export default function LoginPage() {
       </div>
     </div>
   );
+}
+
+export default function LoginPage() {
+  return <Suspense fallback={<div className="p-6 text-sm text-gray-600">Loading...</div>}><LoginInner /></Suspense>;
 }

@@ -22,6 +22,16 @@ from app.services.text_styles import (
 client = TestClient(app)
 
 
+@pytest.fixture()
+def auth_headers(tmp_path, monkeypatch):
+    import app.services.user_store as us
+    monkeypatch.setattr(us, "APP_DB_PATH", str(tmp_path / "auth.db"))
+    us.init_db()
+    user = us.create_user("tester@example.com", "password123")
+    token = us.create_access_token(user)
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_default_style_stays_visually_compatible():
     zone = SAFE_ZONES["9:16"]
     line = style_to_ass_style("ViralCap", normalize_text_style(DEFAULT_TEXT_STYLE), zone)
@@ -108,7 +118,7 @@ def test_lower_third_is_sanitized_and_rendered(tmp_path):
     assert "Kilix" in text
 
 
-def test_preview_endpoint_accepts_style_and_lower_third():
+def test_preview_endpoint_accepts_style_and_lower_third(auth_headers):
     r = client.post(
         "/api/v1/captions/preview",
         json={
@@ -117,6 +127,7 @@ def test_preview_endpoint_accepts_style_and_lower_third():
             "caption_style": TEXT_STYLE_PRESETS["neon"],
             "lower_third": {"speaker": "Amina", "topic": "Summit"},
         },
+        headers=auth_headers,
     )
     assert r.status_code == 200
     body = r.json()

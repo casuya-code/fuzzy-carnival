@@ -46,12 +46,10 @@ def require_api_key(
     if authorization and authorization.lower().startswith("bearer "):
         provided_bearer = authorization[7:].strip()
 
-    # API key takes precedence when present.
     if provided_api:
         for key in keys:
             if hmac.compare_digest(provided_api, key):
                 return
-        # Also allow a user token passed via X-API-Key by mistake? No, be strict.
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     if provided_bearer:
@@ -60,10 +58,6 @@ def require_api_key(
                 return
         if verify_access_token(provided_bearer):
             return
-        if keys or REQUIRE_AUTH:
-            raise HTTPException(status_code=401, detail="Invalid or expired credentials")
-        return
+        raise HTTPException(status_code=401, detail="Invalid or expired credentials")
 
-    if keys or REQUIRE_AUTH:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    return
+    raise HTTPException(status_code=401, detail="Authentication required")

@@ -1,5 +1,7 @@
 "use client";
 
+import RequireAuth from "@/components/RequireAuth";
+
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -89,6 +91,7 @@ export default function HistoryPage() {
   }));
 
   return (
+    <RequireAuth>
     <div className="space-y-6 pb-10">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -222,5 +225,6 @@ export default function HistoryPage() {
         )
       )}
     </div>
+    </RequireAuth>
   );
 }
