@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import InfoTip from "@/components/InfoTip";
 import { useAuth } from "@/components/AuthProvider";
+import { getAccountStats } from "@/lib/api";
 
 const tools = [
   {
@@ -65,6 +67,16 @@ const tools = [
 
 export default function Home() {
   const { user, loading, logout } = useAuth();
+  const [totalUsers, setTotalUsers] = useState<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getAccountStats()
+      .then((stats) => { if (active) setTotalUsers(stats.total_users); })
+      .catch(() => { if (active) setTotalUsers(null); });
+    return () => { active = false; };
+  }, [user?.id]);
+
   const initial = (user?.email || "?").trim().charAt(0).toUpperCase() || "?";
   const avatarStyle = user?.avatar
     ? { backgroundImage: `url("${user.avatar}")`, backgroundSize: "cover", backgroundPosition: "center" }
@@ -73,9 +85,16 @@ export default function Home() {
   return (
     <div className="space-y-6 py-2 sm:py-4">
       <section className="rounded-2xl border bg-white p-5 sm:p-7 shadow-sm">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">Yakodonyo Studio</h1>
           <InfoTip text="Create speech and videos in a few easy steps. Use the menu or pick a tool below." label="About" />
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700"
+            title="Registered accounts"
+          >
+            <span aria-hidden="true">👥</span>
+            {totalUsers === null ? "…" : totalUsers.toLocaleString()} {totalUsers === 1 ? "user" : "users"}
+          </span>
         </div>
         <p className="mt-2 text-sm sm:text-base text-gray-600 max-w-3xl">Speech and video, in a few steps.</p>
         <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3 text-sm w-full">

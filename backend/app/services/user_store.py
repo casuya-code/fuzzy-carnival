@@ -257,6 +257,14 @@ def reset_password(token: str, new_password: str) -> bool:
     return True
 
 
+def count_users() -> int:
+    """Public aggregate count of registered accounts (no personal data)."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+    return int(row["n"])
+
+
 def get_user(user_id: int) -> dict[str, Any] | None:
     init_db()
     with _connect() as conn:

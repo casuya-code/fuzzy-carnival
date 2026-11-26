@@ -42,6 +42,12 @@ export interface AuthUser {
   avatar?: string;
 }
 
+export async function getAccountStats(): Promise<{ total_users: number }> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/stats`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Stats unavailable (${res.status})`);
+  return res.json();
+}
+
 export async function signup(email: string, password: string): Promise<{ access_token: string; user: AuthUser }> {
   const res = await fetch(`${API_BASE}/api/v1/auth/signup`, {
     method: "POST",

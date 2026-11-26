@@ -68,6 +68,18 @@ def test_profile_update_persists_and_rejects_bad_avatar(session):
     assert bad.status_code == 400
 
 
+def test_public_stats_counts_registered_users(session):
+    import app.services.user_store as us
+
+    first = client.get("/api/v1/auth/stats")
+    assert first.status_code == 200
+    assert first.json()["total_users"] == 1
+
+    us.create_user("second@example.com", "password123")
+    second = client.get("/api/v1/auth/stats")
+    assert second.json()["total_users"] == 2
+
+
 def test_change_password_revokes_old_token(session):
     headers, old_token = session
 

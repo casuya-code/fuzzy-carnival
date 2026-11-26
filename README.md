@@ -240,6 +240,8 @@ can open **Profile** in the sidebar footer to view their email, optionally add
 a name, phone number and profile picture, and change their password. Profile
 data is stored in the backend SQLite database (`APP_DB_PATH`). Changing the
 password revokes older sessions and returns a fresh token for the current one.
+`GET /api/v1/auth/stats` returns the public aggregate registered-user count
+shown in the home card (no personal data).
 
 ## Memory management
 

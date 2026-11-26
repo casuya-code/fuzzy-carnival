@@ -10,6 +10,7 @@ from app.services.user_store import (
     authenticate_user,
     bump_token_version,
     change_password as store_change_password,
+    count_users,
     create_access_token,
     create_password_reset,
     create_user,
@@ -80,6 +81,11 @@ def _current_user(authorization: str | None = Header(default=None)) -> dict:
     if not user:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
     return user
+
+
+@router.get("/stats")
+def account_stats():
+    return {"total_users": count_users()}
 
 
 @router.post("/signup", response_model=AuthResponse)
