@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from app.auth import require_api_key
+from app.auth import require_user as require_api_key
 from app.config import DEFAULT_TRIM_END_SEC, DEFAULT_WORDS_PER_CHUNK, TEMP_AUDIO_DIR
 from app.observability import record
 from app.rate_limit import rate_limit

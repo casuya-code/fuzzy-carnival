@@ -36,7 +36,7 @@ from app.services.upload_validation import (
     scan_upload_stream,
     validate_audio_upload,
 )
-from app.auth import require_api_key
+from app.auth import require_user as require_api_key
 from app.rate_limit import rate_limit
 from PIL import ImageFont
 

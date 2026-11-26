@@ -125,7 +125,9 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("
 # `Authorization: Bearer <key>` or `X-API-Key: <key>`.
 # Set REQUIRE_AUTH=true to fail closed when no key is configured.
 API_KEY = os.getenv("API_KEY", "").strip()
-REQUIRE_AUTH = _env_bool("REQUIRE_AUTH", False)
+# Require authentication by default: generated content is per-user and anonymous
+# access would let callers see shared/global content (M? / user isolation).
+REQUIRE_AUTH = _env_bool("REQUIRE_AUTH", True)
 # C2: never ship a publicly known signing key. Dev gets an ephemeral secret;
 # production fails fast until a stable secret is configured.
 AUTH_SECRET = os.getenv("AUTH_SECRET", "").strip()

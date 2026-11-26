@@ -65,7 +65,7 @@ def test_packaging_clip_length_validation(auth_headers):
     assert r.status_code in (400, 422)
 
 
-def test_auth_required_when_api_key_configured(monkeypatch):
+def test_auth_required_when_api_key_configured(monkeypatch, auth_headers):
     import app.auth as auth
 
     monkeypatch.setattr(auth, "_configured_keys", lambda: ["test-key"])
@@ -73,10 +73,11 @@ def test_auth_required_when_api_key_configured(monkeypatch):
     assert r.status_code in (401, 405)
     r2 = client.post("/api/v1/normalize", json={"text": "hello", "language": "en"})
     assert r2.status_code == 401
+    # Content endpoints now require a logged-in user, not just an API key.
     r3 = client.post(
         "/api/v1/normalize",
         json={"text": "hello", "language": "en"},
-        headers={"X-API-Key": "test-key"},
+        headers=auth_headers,
     )
     assert r3.status_code == 200
 

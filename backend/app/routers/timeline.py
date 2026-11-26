@@ -15,7 +15,7 @@ from app.services.timeline_service import (
     segments_from_forced_alignment_words,
     word_items_from_elevenlabs_response,
 )
-from app.auth import require_api_key
+from app.auth import require_user as require_api_key
 from app.rate_limit import rate_limit
 
 router = APIRouter(prefix="/api/v1", tags=["timeline"], dependencies=[Depends(require_api_key), Depends(rate_limit)])

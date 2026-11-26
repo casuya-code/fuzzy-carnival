@@ -41,10 +41,10 @@ const VIDEO_KEY = "videoHistory";
 const LIMIT = HISTORY_LIMIT;
 const SCOPE_PREFIX = "yakodonyo:history:";
 
-/** History is per account; unauthenticated sessions keep the legacy keys. */
-function scopedKey(base: string): string {
+/** History is per account. Anonymous sessions get no shared history (login required). */
+function scopedKey(base: string): string | null {
   const uid = getUserUid();
-  return uid ? `${SCOPE_PREFIX}${encodeURIComponent(uid)}:${base}` : base;
+  return uid ? `${SCOPE_PREFIX}${encodeURIComponent(uid)}:${base}` : null;
 }
 
 /** Move pre-scoping history into the current account exactly once. */
@@ -65,6 +65,7 @@ function migrateLegacy(scoped: string, base: string): void {
 function readList<T>(base: string, isValid: (item: unknown) => item is T): T[] {
   if (typeof window === "undefined") return [];
   const key = scopedKey(base);
+  if (!key) return [];
   migrateLegacy(key, base);
   try {
     const raw = window.localStorage.getItem(key);
@@ -78,9 +79,10 @@ function readList<T>(base: string, isValid: (item: unknown) => item is T): T[] {
 function writeList<T>(base: string, list: T[]): void {
   if (typeof window === "undefined") return;
   const key = scopedKey(base);
+  if (!key) return;
   try {
     window.localStorage.setItem(key, JSON.stringify(list.slice(0, LIMIT)));
-    if (key !== base) window.localStorage.removeItem(base);
+    window.localStorage.removeItem(base);
   } catch {
     // storage may be full or unavailable; history is best-effort
   }
@@ -187,9 +189,10 @@ export function removeDeliverable(url: string): DeliverableItem[] {
 export function clearDeliverables(): void {
   if (typeof window === "undefined") return;
   const key = scopedKey(DELIVERABLE_KEY);
+  if (!key) return;
   try {
     window.localStorage.removeItem(key);
-    if (key !== DELIVERABLE_KEY) window.localStorage.removeItem(DELIVERABLE_KEY);
+    window.localStorage.removeItem(DELIVERABLE_KEY);
   } catch {}
 }
 

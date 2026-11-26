@@ -56,7 +56,7 @@ from app.services.video_transitions import (
     parse_transitions,
 )
 from app.services.video_processor import stitch_clips_with_audio, stitch_silent_clips, trim_and_zoom_clip
-from app.auth import require_api_key
+from app.auth import require_user as require_api_key
 from app.rate_limit import rate_limit
 from app.services.job_context import JobCancelled, check_cancelled, report_progress
 from app.observability import timed

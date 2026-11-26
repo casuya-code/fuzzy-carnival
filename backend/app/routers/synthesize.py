@@ -48,7 +48,7 @@ from app.services.r2_storage import (
 )
 from app.services.text_normalizer import normalize_text
 from app.services.timeline_service import estimate_timeline
-from app.auth import require_api_key
+from app.auth import require_user as require_api_key
 from app.rate_limit import rate_limit
 from app.observability import record, timed
 

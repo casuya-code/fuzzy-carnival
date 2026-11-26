@@ -180,6 +180,7 @@ describe("auth tokens and 401 handling", () => {
 
 describe("history storage", () => {
   it("filters corrupted entries before any operation", () => {
+    setUserToken(liveToken("tester"));
     window.localStorage.setItem(
       "speechHistory",
       JSON.stringify([null, { audio_url: "ok" }, 7, { wrong: true }])
@@ -189,12 +190,13 @@ describe("history storage", () => {
   });
 
   it("uses one 20-item cap for returned and persisted deliverables", () => {
+    setUserToken(liveToken("tester"));
     let list: any[] = [];
     for (let i = 0; i < 25; i += 1) {
       list = addDeliverable({ kind: "preset", title: "t", url: `u${i}` });
     }
     expect(list).toHaveLength(20);
-    expect(JSON.parse(window.localStorage.getItem("deliverableHistory") || "[]")).toHaveLength(20);
+    expect(loadDeliverables()).toHaveLength(20);
   });
 
   it("scopes keys by uid and migrates legacy entries once", () => {

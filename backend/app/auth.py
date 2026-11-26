@@ -16,7 +16,7 @@ from __future__ import annotations
 import hmac
 import os
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from app.config import API_KEY, REQUIRE_AUTH
 from app.services.user_store import verify_access_token
@@ -65,9 +65,12 @@ def require_api_key(
         provided_bearer = authorization[7:].strip()
 
     if not keys:
-        # H1: REQUIRE_AUTH now actually controls the no-keys case.
+        # H1: when no API keys are configured, a valid user token still
+        # authenticates the caller; REQUIRE_AUTH only rejects anonymous access.
+        if provided_bearer and verify_access_token(provided_bearer):
+            return
         if REQUIRE_AUTH:
-            raise HTTPException(status_code=401, detail="Authentication is not configured")
+            raise HTTPException(status_code=401, detail="Authentication required")
         return
 
     # H2: check every credential channel instead of letting a stale X-API-Key
@@ -79,3 +82,17 @@ def require_api_key(
     if provided_bearer and verify_access_token(provided_bearer):
         return
     raise HTTPException(status_code=401, detail="Invalid or expired credentials")
+
+
+def get_current_user(request: Request) -> dict[str, Any]:
+    """Require a valid logged-in user (JWT). Used for per-user content."""
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        user = verify_access_token(auth[7:].strip())
+        if user:
+            return user
+    raise HTTPException(status_code=401, detail="Authentication required")
+
+
+def require_user(request: Request) -> dict[str, Any]:
+    return get_current_user(request)

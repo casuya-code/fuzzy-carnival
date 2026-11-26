@@ -24,7 +24,7 @@ from app.services.packaging_processor import (
 from app.services.r2_storage import delete_object, download_reference, upload_output
 from app.services.upload_validation import copy_upload_capped, resolve_brand_font_path
 from app.services.text_styles import normalize_lower_third, normalize_text_style
-from app.auth import require_api_key
+from app.auth import require_user as require_api_key
 from app.rate_limit import rate_limit
 
 router = APIRouter(prefix="/api/v1/packaging", tags=["packaging"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
