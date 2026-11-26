@@ -150,7 +150,9 @@ describe("auth tokens and 401 handling", () => {
     );
 
     render(<AuthProvider><Probe /></AuthProvider>);
-    expect(await screen.findByTestId("user")).toHaveTextContent("user@example.com");
+    await waitFor(() =>
+      expect(screen.getByTestId("user")).toHaveTextContent("user@example.com")
+    );
 
     fetchMock.mockImplementation(async (url: any, init?: any) =>
       init?.method === "POST" && String(url).includes("/auth/logout-all")
