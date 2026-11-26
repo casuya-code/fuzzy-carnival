@@ -208,6 +208,30 @@ older flat `outputs/<basename>` artifacts remain readable. Local uploads use
 `PUT /api/v1/local-upload/{key}`. Ensure FFmpeg (incl. `C:\Users\Admin\ffmpeg` on
 Windows) is on the backend process PATH.
 
+### Keep both dev servers running (Windows)
+
+`scripts/dev-watch.ps1` keeps the frontend (`http://localhost:3000`) and backend
+(`http://127.0.0.1:8000`) alive. Run it once to start anything that is down:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-watch.ps1
+```
+
+Use `-Force` to restart both servers immediately (e.g. after dependency or
+config changes), and `-Status` to print their PIDs. Normal source edits are
+picked up automatically by Next dev and `uvicorn --reload`.
+
+To keep them running automatically, register a per-minute scheduled task for
+the current user:
+
+```powershell
+$script = "C:\Users\Admin\Desktop\yakodonyo\scripts\dev-watch.ps1"
+$tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`""
+schtasks /Create /TN "Yakodonyo Dev Watch" /TR $tr /SC MINUTE /MO 1 /F
+```
+
+Logs: `%TEMP%\yakodonyo-dev-watch.log` plus the per-server `*-dev*.log` files.
+
 ## Memory management
 
 `backend/app/services/model_manager.py` keeps Kyutai Pocket TTS warm by
