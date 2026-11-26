@@ -22,6 +22,8 @@ export default function Sidebar() {
   const [open, setOpen] = useState(false);
   const { user, loading, logout } = useAuth();
 
+  const emailInitial = (user?.email || "?").trim().charAt(0).toUpperCase() || "?";
+
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
@@ -100,8 +102,19 @@ export default function Sidebar() {
           <div className="border-t p-4 space-y-3">
             {!loading && user ? (
               <div className="space-y-2">
-                <div className="text-xs text-gray-500">Signed in</div>
-                <div className="truncate text-sm font-medium text-gray-800" title={user.email}>{user.email}</div>
+                <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50/70 px-2.5 py-2">
+                  <div
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white shadow-sm ring-2 ring-white"
+                    title={user.email}
+                    aria-label={`Signed in as ${user.email}`}
+                  >
+                    {emailInitial}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs text-gray-500">Signed in</div>
+                    <div className="truncate text-sm font-medium text-gray-800" title={user.email}>{user.email}</div>
+                  </div>
+                </div>
                 <button
                   onClick={() => { logout(); setOpen(false); }}
                   className="w-full rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
