@@ -99,40 +99,39 @@ export default function Sidebar() {
             })}
           </nav>
 
-          <div className="border-t p-4 space-y-3">
-            {!loading && user ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50/70 px-2.5 py-2">
-                  <div
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white shadow-sm ring-2 ring-white"
-                    title={user.email}
-                    aria-label={`Signed in as ${user.email}`}
-                  >
-                    {emailInitial}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs text-gray-500">Signed in</div>
-                    <div className="truncate text-sm font-medium text-gray-800" title={user.email}>{user.email}</div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => { logout(); setOpen(false); }}
-                  className="w-full rounded-lg border px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                >
-                  Log out
-                </button>
+          <div className="border-t p-3">
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              <div className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
+                <span className="font-medium text-gray-700">Tip</span>
+                <InfoTip text="Start with Speech, then add music, edit video, and captions." label="Workflow tip" placement="top" />
               </div>
-            ) : !loading ? (
-              <div className="grid grid-cols-2 gap-2">
-                <Link href="/login" onClick={() => setOpen(false)} className="rounded-lg border px-3 py-2 text-center text-sm text-gray-700 hover:bg-gray-50">Log in</Link>
-                <Link href="/signup" onClick={() => setOpen(false)} className="rounded-lg bg-blue-600 px-3 py-2 text-center text-sm text-white hover:bg-blue-700">Sign up</Link>
+              <div className="flex min-w-0 items-center justify-end gap-1.5">
+                {!loading && user ? (
+                  <>
+                    <div
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white shadow-sm"
+                      title={user.email}
+                      aria-label={`Signed in as ${user.email}`}
+                    >
+                      {emailInitial}
+                    </div>
+                    <button
+                      onClick={() => { logout(); setOpen(false); }}
+                      className="shrink-0 rounded-lg border px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                      title={`Log out ${user.email}`}
+                    >
+                      Log out
+                    </button>
+                  </>
+                ) : !loading ? (
+                  <>
+                    <Link href="/login" onClick={() => setOpen(false)} className="shrink-0 rounded-lg border px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">Log in</Link>
+                    <Link href="/signup" onClick={() => setOpen(false)} className="shrink-0 rounded-lg bg-blue-600 px-2 py-1.5 text-xs text-white hover:bg-blue-700">Sign up</Link>
+                  </>
+                ) : (
+                  <span className="text-xs text-gray-500">Checking...</span>
+                )}
               </div>
-            ) : (
-              <div className="text-xs text-gray-500">Checking session...</div>
-            )}
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="font-medium text-gray-700">Tip</span>
-              <InfoTip text="Start with Speech, then add music, edit video, and captions." label="Workflow tip" placement="top" />
             </div>
           </div>
         </div>
