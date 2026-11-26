@@ -124,6 +124,10 @@ MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 25, min_value=1, max_value=500)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 SERVE_STATIC = _env_bool("SERVE_STATIC", True)
 EXPOSE_HEALTH_DETAILS = _env_bool("EXPOSE_HEALTH_DETAILS", False)
+# Local-disk media fallback is for development only. Disable in production when R2 is unconfigured.
+ALLOW_LOCAL_MEDIA_FALLBACK = _env_bool("ALLOW_LOCAL_MEDIA_FALLBACK", True)
+REF_CACHE_MAX_FILES = _env_int("REF_CACHE_MAX_FILES", 128, min_value=8)
+REF_CACHE_MAX_AGE_HOURS = _env_int("REF_CACHE_MAX_AGE_HOURS", 72, min_value=1)
 
 # --- Memory guard -----------------------------------------------------------------
 # Railway $5 = ~8GB; keep headroom by unloading heavy engines before loading another.

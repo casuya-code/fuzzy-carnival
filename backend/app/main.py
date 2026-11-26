@@ -28,9 +28,36 @@ from app.schemas.tts import HealthResponse
 logger = logging.getLogger(__name__)
 
 
+def _cleanup_temp_audio() -> None:
+    # Best-effort cleanup of stale scratch dirs/files; keep refs_cache managed separately.
+    import shutil
+    import time
+    from pathlib import Path
+
+    now = time.time()
+    max_age = 24 * 3600
+    for child in Path(TEMP_AUDIO_DIR).iterdir():
+        try:
+            if child.name == "refs_cache":
+                continue
+            age = now - child.stat().st_mtime
+            if age < max_age:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+        except Exception as e:
+            logger.debug("Temp cleanup skipped for %s: %s", child, e)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Warm default engines in the background so the first request is fast."""
+    try:
+        _cleanup_temp_audio()
+    except Exception as e:
+        logger.warning("Temp audio cleanup failed: %s", e, exc_info=True)
     try:
         from app.routers.synthesize import get_manager
 

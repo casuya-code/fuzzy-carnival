@@ -5,6 +5,7 @@ import boto3
 from botocore.config import Config
 
 from app.config import (
+    ALLOW_LOCAL_MEDIA_FALLBACK,
     PUBLIC_BASE_URL,
     R2_ACCESS_KEY_ID,
     R2_ACCOUNT_ID,
@@ -19,6 +20,11 @@ PRESIGN_EXPIRES_SEC = 3600
 
 def _r2_configured() -> bool:
     return bool(R2_ACCOUNT_ID and R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY)
+
+
+def _require_local_fallback() -> None:
+    if not ALLOW_LOCAL_MEDIA_FALLBACK:
+        raise RuntimeError("Object storage is not configured and local media fallback is disabled")
 
 
 def _client():
@@ -65,9 +71,25 @@ def _content_type(path: str) -> str:
     return "application/octet-stream"
 
 
+def object_exists(key: str) -> bool:
+    """Best-effort existence check for cached objects."""
+    if not _r2_configured():
+        local = _local_key_path(key)
+        return bool(local is not None and local.exists())
+    if R2_PUBLIC_URL:
+        # Public bucket/CDN URL: skip HEAD via S3; caller may still get 404 at fetch time.
+        return True
+    try:
+        _client().head_object(Bucket=R2_BUCKET_NAME, Key=key)
+        return True
+    except Exception:
+        return False
+
+
 def public_url(key: str) -> str:
     """Return a fresh URL for an already-uploaded object (never cache presigned URLs)."""
     if not _r2_configured():
+        _require_local_fallback()
         local = _local_key_path(key)
         if local is None:
             raise ValueError("Invalid object key")
@@ -112,6 +134,7 @@ def download_reference(key: str, dest: Path | None = None) -> str:
         return str(dest)
 
     if not _r2_configured():
+        _require_local_fallback()
         raise RuntimeError("R2 not configured and local reference not found")
 
     _client().download_file(R2_BUCKET_NAME, key, str(dest))
@@ -125,6 +148,7 @@ def upload_output(local_path: str, key: str) -> str:
     from the backend's ``/static`` mount so the frontend can still play it.
     """
     if not _r2_configured():
+        _require_local_fallback()
         dest = _local_key_path(key)
         if dest is None:
             raise ValueError("Invalid object key")

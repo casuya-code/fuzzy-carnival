@@ -21,11 +21,11 @@ jobs:
           pip install pytest fastapi==0.111.0 uvicorn==0.30.1 pydantic==2.7.4 python-multipart==0.0.9 boto3==1.34.131 requests>=2.31.0 Pillow>=10.0.0 numpy>=1.24 scipy>=1.10
       - name: Compile backend
         run: python -m compileall app tests
-      - name: Run smoke tests
+      - name: Run tests
         env:
           EXPOSE_HEALTH_DETAILS: "false"
           REQUIRE_AUTH: "false"
-        run: pytest -q tests/test_smoke.py
+        run: pytest -q
 
   frontend:
     runs-on: ubuntu-latest

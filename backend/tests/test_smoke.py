@@ -121,3 +121,12 @@ def test_naming_utils_unique_keys():
     k2 = build_speech_r2_key("kyutai", "en", "Topic", "mp3", "20260101", "010101")
     assert k1 != k2
     assert k1.startswith("audio/20260101/Speech_KYU_ENG_Topic_20260101_010101_")
+
+
+def test_local_media_fallback_guard(monkeypatch):
+    import app.services.r2_storage as r2
+
+    monkeypatch.setattr(r2, "_r2_configured", lambda: False)
+    monkeypatch.setattr(r2, "ALLOW_LOCAL_MEDIA_FALLBACK", False)
+    with pytest.raises(RuntimeError):
+        r2.public_url("outputs/demo.mp3")

@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 import threading
 import uuid
 from collections import OrderedDict
@@ -16,6 +17,8 @@ from app.config import (
     DENOISE_REFERENCE,
     ELEVENLABS_API_KEY,
     ELEVENLABS_ENABLE_CLONING,
+    REF_CACHE_MAX_AGE_HOURS,
+    REF_CACHE_MAX_FILES,
     TEMP_AUDIO_DIR,
 )
 from app.engines.azure_swahili import AzureQuotaExceededError
@@ -37,6 +40,7 @@ from app.services.naming_utils import build_speech_r2_key
 from app.services.r2_storage import (
     download_reference,
     local_output_path,
+    object_exists,
     public_url,
     upload_output,
 )
@@ -75,6 +79,30 @@ _ref_cache_lock = threading.Lock()
 _ref_key_locks: dict[str, threading.Lock] = {}
 _REFS_DIR = TEMP_AUDIO_DIR / "refs_cache"
 _REFS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _cleanup_ref_cache() -> None:
+    try:
+        now = time.time()
+        max_age = REF_CACHE_MAX_AGE_HOURS * 3600
+        files = [p for p in _REFS_DIR.glob("*") if p.is_file()]
+        for p in files:
+            try:
+                if now - p.stat().st_mtime > max_age:
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass
+        files = [p for p in _REFS_DIR.glob("*") if p.is_file()]
+        if len(files) <= REF_CACHE_MAX_FILES:
+            return
+        files.sort(key=lambda p: p.stat().st_mtime)
+        for p in files[: max(0, len(files) - REF_CACHE_MAX_FILES)]:
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug("Ref cache cleanup failed: %s", e)
 
 CLONING_ENGINES = {"kyutai", "afrispeech", "msingi"}
 
@@ -216,6 +244,9 @@ def _lookup_cached_result(cache_key: tuple, *, skip_cache: bool) -> SynthesizeRe
         if "/static/" in cached.audio_url and local is not None and not local.exists():
             del _result_cache[cache_key]
             return None
+        if "/static/" not in cached.audio_url and not object_exists(cached.audio_r2_key):
+            _result_cache.pop(cache_key, None)
+            return None
         try:
             return _cached_response_url(cached)
         except Exception:
@@ -348,6 +379,7 @@ def _prepare_reference(req: SynthesizeRequest, engine_name: str):
                     pass
             with _ref_cache_lock:
                 _ref_cache[cache_lookup_key] = cached_norm
+            _cleanup_ref_cache()
         return cached_norm
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
