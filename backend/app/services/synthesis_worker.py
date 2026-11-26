@@ -78,6 +78,9 @@ class SynthesisWorker:
         self._proc: mp.Process | None = None
         self._lock = mp.Lock() if False else None  # not used; main router lock serializes
         self._start_lock = __import__("threading").Lock()
+        self._started_at: float | None = None
+        self._restart_count = 0
+        self._last_error: str | None = None
 
     def _ensure_started(self) -> None:
         with self._start_lock:
@@ -121,6 +124,7 @@ class SynthesisWorker:
     def restart(self) -> None:
         with self._start_lock:
             logger.warning("Restarting synthesis worker")
+            self._restart_count += 1
             self._stop_locked()
             # Respawn immediately so warmup begins before the next request arrives.
             self._ensure_started_unlocked()
@@ -132,11 +136,22 @@ class SynthesisWorker:
         self._result_q = self._ctx.Queue()
         self._proc = self._ctx.Process(target=_worker_loop, args=(self._job_q, self._result_q), daemon=True)
         self._proc.start()
+        self._started_at = time.time()
         logger.info("Synthesis worker started pid=%s", self._proc.pid)
 
     def is_alive(self) -> bool:
         p = self._proc
         return bool(p is not None and p.is_alive())
+
+    def status(self) -> dict[str, Any]:
+        p = self._proc
+        return {
+            "alive": bool(p is not None and p.is_alive()),
+            "pid": p.pid if p is not None else None,
+            "started_at": self._started_at,
+            "restart_count": self._restart_count,
+            "last_error": self._last_error,
+        }
 
     def submit(
         self,
@@ -153,6 +168,7 @@ class SynthesisWorker:
         try:
             self._job_q.put((job_id, req_dict), timeout=5)
         except Exception as e:
+            self._last_error = str(e)
             self.restart()
             return SynthesisJobResult(ok=False, error_type="WorkerError", error_message=f"Failed to submit synthesis job: {e}")
 

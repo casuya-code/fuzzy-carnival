@@ -26,6 +26,11 @@ jobs:
           EXPOSE_HEALTH_DETAILS: "false"
           REQUIRE_AUTH: "false"
         run: pytest -q
+      - name: Dependency audit (report-only)
+        continue-on-error: true
+        run: |
+          python -m pip install pip-audit
+          pip-audit -r requirements.txt || true
 
   frontend:
     runs-on: ubuntu-latest
@@ -43,6 +48,11 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint -- --no-cache
+      - name: Test
+        run: npm test
+      - name: Dependency audit (report-only)
+        continue-on-error: true
+        run: npm audit --audit-level=high || true
       - name: Build
         env:
           NEXT_PUBLIC_RAILWAY_API_URL: http://127.0.0.1:8000

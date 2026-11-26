@@ -29,6 +29,7 @@ from app.services.beat_sync_processor import (
     get_beat_synced_zoom_expr,
 )
 from app.services.r2_storage import download_reference, upload_output
+from app.services.upload_validation import validate_audio_upload
 from app.auth import require_api_key
 from app.rate_limit import rate_limit
 from PIL import ImageFont
@@ -95,9 +96,20 @@ async def local_upload(key: str, request: Request):
                     raise HTTPException(status_code=413, detail=f"Upload too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
                 f.write(chunk)
         tmp.replace(dest)
+        try:
+            header = dest.read_bytes()[:64]
+            validate_audio_upload(dest.name, content_type, header)
+        except ValueError as e:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception:
         try:
             tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            if dest.exists() and dest.stat().st_size == 0:
+                dest.unlink(missing_ok=True)
         except Exception:
             pass
         raise

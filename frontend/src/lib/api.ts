@@ -34,6 +34,8 @@ export function backendAuthHeaders(): Record<string, string> {
 export interface AuthUser {
   id: number;
   email: string;
+  role?: string;
+  created_at?: number;
 }
 
 export async function signup(email: string, password: string): Promise<{ access_token: string; user: AuthUser }> {
@@ -64,6 +66,33 @@ export async function me(): Promise<AuthUser> {
   if (!res.ok) throw new Error(extractDetail(await res.text()) || `Auth check failed (${res.status})`);
   const data = await res.json();
   return data.user as AuthUser;
+}
+
+export async function logoutAll(): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/logout-all`, {
+    method: "POST",
+    headers: backendAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Logout failed (${res.status})`);
+}
+
+export async function requestPasswordReset(email: string): Promise<{ ok: boolean; message?: string; reset_token?: string }> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/password-reset/request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Reset request failed (${res.status})`);
+  return res.json();
+}
+
+export async function confirmPasswordReset(token: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/password-reset/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Reset failed (${res.status})`);
 }
 
 export type Engine = "kyutai" | "afrispeech" | "msingi" | "mms" | "azure" | "elevenlabs";

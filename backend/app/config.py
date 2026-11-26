@@ -122,6 +122,7 @@ API_KEY = os.getenv("API_KEY", "").strip()
 REQUIRE_AUTH = _env_bool("REQUIRE_AUTH", False)
 AUTH_SECRET = os.getenv("AUTH_SECRET", "dev-insecure-change-me").strip() or "dev-insecure-change-me"
 AUTH_TOKEN_TTL_HOURS = _env_int("AUTH_TOKEN_TTL_HOURS", 168, min_value=1, max_value=24 * 30)
+EXPOSE_RESET_TOKENS = _env_bool("EXPOSE_RESET_TOKENS", False)
 MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 25, min_value=1, max_value=500)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 SERVE_STATIC = _env_bool("SERVE_STATIC", True)

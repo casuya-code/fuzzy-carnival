@@ -138,20 +138,20 @@ def health():
         "azure": ENABLE_AZURE,
         "elevenlabs": ENABLE_ELEVENLABS,
     }
-    worker_alive = False
+    worker_status = {}
     try:
         from app.services.synthesis_worker import get_synthesis_worker
 
-        worker_alive = bool(get_synthesis_worker().is_alive())
+        worker_status = get_synthesis_worker().status()
     except Exception:
-        worker_alive = False
+        worker_status = {"alive": False}
 
     capabilities = {
         "azure_configured": bool(AZURE_SPEECH_KEY),
         "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
         "elevenlabs_cloning": bool(ELEVENLABS_API_KEY and ELEVENLABS_ENABLE_CLONING),
         "synthesis_busy": bool(synthesize.is_synthesis_busy()),
-        "worker_alive": worker_alive,
+        "worker_alive": bool(worker_status.get("alive")),
     }
     engines = [name for name in ENGINE_NAMES if engine_flags.get(name, False)]
 
@@ -164,6 +164,7 @@ def health():
             loaded_models=[],
             engines=[],
             capabilities={},
+            worker={},
             issues=[],
         )
 
@@ -174,6 +175,7 @@ def health():
         loaded_models=loaded,
         engines=engines,
         capabilities=capabilities,
+        worker=worker_status,
         issues=issues,
     )
 

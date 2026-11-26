@@ -321,9 +321,7 @@ def _prepare_reference(req: SynthesizeRequest, engine_name: str):
     try:
         denoise = req.denoise_ref if req.denoise_ref is not None else DENOISE_REFERENCE
         key_hash = hashlib.md5(req.voice_r2_key.encode()).hexdigest()
-        cache_tag = f"{key_hash}_v3_{'dn' if denoise else 'raw'}"
-        cached_norm = str(_REFS_DIR / f"{cache_tag}.wav")
-        cache_lookup_key = f"{req.voice_r2_key}|{cache_tag}"
+        cache_lookup_key = f"{req.voice_r2_key}|{'dn' if denoise else 'raw'}"
 
         def _use_cached(path: str) -> str | None:
             p = Path(path)
@@ -347,9 +345,6 @@ def _prepare_reference(req: SynthesizeRequest, engine_name: str):
             valid = _use_cached(cached)
             if valid:
                 return valid
-        existing = _use_cached(cached_norm)
-        if existing:
-            return existing
 
         lock = _ref_lock(cache_lookup_key)
         with lock:
@@ -359,28 +354,38 @@ def _prepare_reference(req: SynthesizeRequest, engine_name: str):
                 valid = _use_cached(cached)
                 if valid:
                     return valid
-            existing = _use_cached(cached_norm)
-            if existing:
-                return existing
 
             suffix = Path(req.voice_r2_key).suffix or ".audio"
             src_tmp = _REFS_DIR / f"{key_hash}_{uuid.uuid4().hex[:8]}_src{suffix}"
-            norm_tmp = _REFS_DIR / f"{cache_tag}.{uuid.uuid4().hex[:8]}.tmp.wav"
             downloaded = download_reference(req.voice_r2_key, dest=src_tmp)
+            norm_tmp: Path | None = None
             try:
+                # Content-hash identity prevents stale reuse when same R2 key is overwritten.
+                h = hashlib.sha256()
+                with Path(downloaded).open("rb") as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                        h.update(chunk)
+                cache_tag = f"{h.hexdigest()}_{'dn' if denoise else 'raw'}"
+                cached_norm = str(_REFS_DIR / f"{cache_tag}.wav")
+                existing = _use_cached(cached_norm)
+                if existing:
+                    return existing
+
+                norm_tmp = _REFS_DIR / f"{cache_tag}.{uuid.uuid4().hex[:8]}.tmp.wav"
                 normalize_reference(downloaded, str(norm_tmp), denoise=denoise)
                 validate_reference(str(norm_tmp))  # reject too-short / silent clips
                 os.replace(str(norm_tmp), cached_norm)
+                with _ref_cache_lock:
+                    _ref_cache[cache_lookup_key] = cached_norm
+                _cleanup_ref_cache()
+                return cached_norm
             finally:
                 Path(downloaded).unlink(missing_ok=True)
-                try:
-                    norm_tmp.unlink(missing_ok=True)
-                except Exception:
-                    pass
-            with _ref_cache_lock:
-                _ref_cache[cache_lookup_key] = cached_norm
-            _cleanup_ref_cache()
-        return cached_norm
+                if norm_tmp is not None:
+                    try:
+                        norm_tmp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

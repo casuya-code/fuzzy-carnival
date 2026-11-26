@@ -68,12 +68,13 @@ export default function LoginPage() {
             {submitting ? "Logging in..." : "Log in"}
           </button>
         </form>
-        <p className="mt-4 text-sm text-gray-600">
-          No account?{" "}
-          <Link href="/signup" className="text-blue-600 hover:underline">
-            Create one
-          </Link>
-        </p>
+        <div className="mt-4 flex items-center justify-between text-sm text-gray-600">
+          <Link href="/reset-password" className="text-blue-600 hover:underline">Forgot password?</Link>
+          <span>
+            No account?{" "}
+            <Link href="/signup" className="text-blue-600 hover:underline">Create one</Link>
+          </span>
+        </div>
       </div>
     </div>
   );

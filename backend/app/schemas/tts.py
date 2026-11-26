@@ -64,4 +64,5 @@ class HealthResponse(BaseModel):
     # Non-secret runtime capabilities so the UI can explain which engines are ready.
     engines: list[str] = []
     capabilities: dict[str, bool] = {}
+    worker: dict = {}
     issues: list[str] = []

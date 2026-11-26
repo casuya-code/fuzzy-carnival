@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { AuthUser, getUserToken, login as apiLogin, me, setUserToken, signup as apiSignup } from "@/lib/api";
+import { AuthUser, getUserToken, login as apiLogin, logoutAll as apiLogoutAll, me, setUserToken, signup as apiSignup } from "@/lib/api";
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -9,6 +9,7 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  logoutAll: () => Promise<void>;
   refresh: () => Promise<void>;
 };
 
@@ -57,6 +58,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout: () => {
         setUserToken(null);
         setUser(null);
+      },
+      logoutAll: async () => {
+        try {
+          await apiLogoutAll();
+        } finally {
+          setUserToken(null);
+          setUser(null);
+        }
       },
       refresh,
     }),
