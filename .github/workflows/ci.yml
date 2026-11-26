@@ -25,7 +25,8 @@ jobs:
         env:
           EXPOSE_HEALTH_DETAILS: "false"
           REQUIRE_AUTH: "false"
-        run: pytest -q
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: python -m pytest -q
       - name: Dependency audit (report-only)
         continue-on-error: true
         run: |
