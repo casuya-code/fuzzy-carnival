@@ -16,6 +16,7 @@ from app.config import APP_DB_PATH, AUTH_SECRET, AUTH_TOKEN_TTL_HOURS
 RESET_TOKEN_TTL_SEC = 3600
 MAX_FAILED_LOGINS = 10
 LOCKOUT_SEC = 15 * 60
+MAX_AVATAR_BYTES = 1_000_000
 
 
 def _db_path() -> Path:
@@ -52,6 +53,9 @@ def init_db() -> None:
         _ensure_column(conn, "users", "token_version", "token_version INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "users", "failed_logins", "failed_logins INTEGER NOT NULL DEFAULT 0")
         _ensure_column(conn, "users", "locked_until", "locked_until INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "users", "name", "name TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "users", "phone", "phone TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "users", "avatar", "avatar TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS password_resets (
@@ -86,12 +90,24 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
+def _field(row: sqlite3.Row | dict[str, Any], key: str, default: Any = "") -> Any:
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
 def _public_user(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     return {
         "id": int(row["id"]),
         "email": str(row["email"]),
-        "role": str(row.get("role", "user") if isinstance(row, dict) else row["role"]),
+        "role": str(_field(row, "role", "user") or "user"),
         "created_at": int(row["created_at"]),
+        "name": str(_field(row, "name", "") or ""),
+        "phone": str(_field(row, "phone", "") or ""),
+        "avatar": str(_field(row, "avatar", "") or ""),
     }
 
 
@@ -186,12 +202,12 @@ def verify_access_token(token: str) -> dict[str, Any] | None:
         email = str(payload["email"]).lower()
         init_db()
         with _connect() as conn:
-            row = conn.execute("SELECT id, email, role, token_version FROM users WHERE id = ?", (uid,)).fetchone()
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
         if not row or str(row["email"]).lower() != email:
             return None
         if int(payload.get("tv", -1)) != int(row["token_version"]):
             return None
-        return {"id": int(row["id"]), "email": str(row["email"]), "role": str(row["role"])}
+        return _public_user(row)
     except Exception:
         return None
 
@@ -239,3 +255,78 @@ def reset_password(token: str, new_password: str) -> bool:
         conn.execute("UPDATE password_resets SET used_at=? WHERE id=?", (now, int(row["id"])))
         conn.commit()
     return True
+
+
+def get_user(user_id: int) -> dict[str, Any] | None:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (int(user_id),)).fetchone()
+    return _public_user(row) if row else None
+
+
+def _validated_avatar(avatar: str | None) -> str:
+    if not avatar:
+        return ""
+    value = avatar.strip()
+    if not value.startswith("data:image/") or ";base64," not in value:
+        raise ValueError("Profile image must be a base64 image data URL")
+    encoded = value.split(";base64,", 1)[1]
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except Exception as e:
+        raise ValueError("Invalid profile image data") from e
+    if not raw or len(raw) > MAX_AVATAR_BYTES:
+        raise ValueError("Profile image is too large")
+    return value
+
+
+def update_profile(
+    user_id: int,
+    name: str | None = None,
+    phone: str | None = None,
+    avatar: str | None = None,
+) -> dict[str, Any]:
+    init_db()
+    if name is None and phone is None and avatar is None:
+        raise ValueError("No profile fields provided")
+    if name is not None and len(name.strip()) > 80:
+        raise ValueError("Name must be at most 80 characters")
+    if phone is not None and len(phone.strip()) > 32:
+        raise ValueError("Phone number must be at most 32 characters")
+    avatar_value = _validated_avatar(avatar) if avatar is not None else None
+    with _connect() as conn:
+        updates: list[str] = []
+        values: list[Any] = []
+        if name is not None:
+            updates.append("name = ?")
+            values.append(name.strip())
+        if phone is not None:
+            updates.append("phone = ?")
+            values.append(phone.strip())
+        if avatar_value is not None:
+            updates.append("avatar = ?")
+            values.append(avatar_value)
+        values.append(int(user_id))
+        conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", values)
+        conn.commit()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (int(user_id),)).fetchone()
+    return _public_user(row)
+
+
+def change_password(user_id: int, current_password: str, new_password: str) -> dict[str, Any]:
+    init_db()
+    if len(new_password) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if hmac.compare_digest(current_password, new_password):
+        raise ValueError("New password must be different from the current password")
+    with _connect() as conn:
+        row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (int(user_id),)).fetchone()
+        if not row or not verify_password(current_password, row["password_hash"]):
+            raise ValueError("Current password is incorrect")
+        conn.execute(
+            "UPDATE users SET password_hash=?, failed_logins=0, locked_until=0, token_version=token_version+1 WHERE id=?",
+            (_hash_password(new_password), int(user_id)),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM users WHERE id = ?", (int(user_id),)).fetchone()
+    return _public_user(updated)

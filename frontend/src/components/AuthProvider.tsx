@@ -1,7 +1,17 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { AuthUser, getUserToken, login as apiLogin, logoutAll as apiLogoutAll, me, setUserToken, signup as apiSignup } from "@/lib/api";
+import {
+  AuthUser,
+  changePassword as apiChangePassword,
+  getUserToken,
+  login as apiLogin,
+  logoutAll as apiLogoutAll,
+  me,
+  setUserToken,
+  signup as apiSignup,
+  updateProfile as apiUpdateProfile,
+} from "@/lib/api";
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -10,6 +20,8 @@ type AuthContextValue = {
   signup: (email: string, password: string) => Promise<void>;
   logout: () => void;
   logoutAll: () => Promise<void>;
+  updateProfile: (payload: { name?: string | null; phone?: string | null; avatar?: string | null }) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   refresh: () => Promise<void>;
 };
 
@@ -66,6 +78,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUserToken(null);
           setUser(null);
         }
+      },
+      updateProfile: async (payload) => {
+        const updated = await apiUpdateProfile(payload);
+        setUser(updated);
+      },
+      changePassword: async (currentPassword, newPassword) => {
+        const res = await apiChangePassword(currentPassword, newPassword);
+        setUserToken(res.access_token);
+        setUser(res.user);
       },
       refresh,
     }),

@@ -36,6 +36,10 @@ export interface AuthUser {
   email: string;
   role?: string;
   created_at?: number;
+  name?: string;
+  phone?: string;
+  /** Base64 image data URL for the profile picture. */
+  avatar?: string;
 }
 
 export async function signup(email: string, password: string): Promise<{ access_token: string; user: AuthUser }> {
@@ -66,6 +70,34 @@ export async function me(): Promise<AuthUser> {
   if (!res.ok) throw new Error(extractDetail(await res.text()) || `Auth check failed (${res.status})`);
   const data = await res.json();
   return data.user as AuthUser;
+}
+
+export async function updateProfile(payload: {
+  name?: string | null;
+  phone?: string | null;
+  avatar?: string | null;
+}): Promise<AuthUser> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/profile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Profile update failed (${res.status})`);
+  const data = await res.json();
+  return data.user as AuthUser;
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ access_token: string; user: AuthUser }> {
+  const res = await fetch(`${API_BASE}/api/v1/auth/change-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  if (!res.ok) throw new Error(extractDetail(await res.text()) || `Password change failed (${res.status})`);
+  return res.json();
 }
 
 export async function logoutAll(): Promise<void> {

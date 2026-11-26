@@ -232,6 +232,15 @@ schtasks /Create /TN "Yakodonyo Dev Watch" /TR $tr /SC MINUTE /MO 1 /F
 
 Logs: `%TEMP%\yakodonyo-dev-watch.log` plus the per-server `*-dev*.log` files.
 
+### Accounts and profile
+
+Public pages (`/`, `/instruction-manual`, `/login`, `/signup`, `/reset-password`)
+are browsable without an account; feature pages require login. Signed-in users
+can open **Profile** in the sidebar footer to view their email, optionally add
+a name, phone number and profile picture, and change their password. Profile
+data is stored in the backend SQLite database (`APP_DB_PATH`). Changing the
+password revokes older sessions and returns a fresh token for the current one.
+
 ## Memory management
 
 `backend/app/services/model_manager.py` keeps Kyutai Pocket TTS warm by

@@ -23,6 +23,9 @@ export default function Sidebar() {
   const { user, loading, logout } = useAuth();
 
   const emailInitial = (user?.email || "?").trim().charAt(0).toUpperCase() || "?";
+  const avatarStyle = user?.avatar
+    ? { backgroundImage: `url("${user.avatar}")`, backgroundSize: "cover", backgroundPosition: "center" }
+    : undefined;
 
   useEffect(() => {
     setOpen(false);
@@ -110,11 +113,20 @@ export default function Sidebar() {
                   <>
                     <div
                       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white shadow-sm"
+                      style={avatarStyle}
                       title={user.email}
                       aria-label={`Signed in as ${user.email}`}
                     >
-                      {emailInitial}
+                      {!user.avatar && emailInitial}
                     </div>
+                    <Link
+                      href="/profile"
+                      onClick={() => setOpen(false)}
+                      className="shrink-0 rounded-lg px-1.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      title="Your profile"
+                    >
+                      Profile
+                    </Link>
                     <button
                       onClick={() => { logout(); setOpen(false); }}
                       className="shrink-0 rounded-lg border px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50"

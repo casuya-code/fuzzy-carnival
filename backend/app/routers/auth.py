@@ -9,10 +9,12 @@ from app.services.mailer import send_password_reset_email
 from app.services.user_store import (
     authenticate_user,
     bump_token_version,
+    change_password as store_change_password,
     create_access_token,
     create_password_reset,
     create_user,
     reset_password,
+    update_profile,
     verify_access_token,
 )
 
@@ -46,6 +48,17 @@ class PasswordResetRequest(BaseModel):
 
 class PasswordResetConfirm(BaseModel):
     token: str = Field(min_length=16, max_length=512)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=80)
+    phone: str | None = Field(default=None, max_length=32)
+    avatar: str | None = Field(default=None, max_length=1_400_000)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
 
 
@@ -94,6 +107,25 @@ def login(req: AuthRequest):
 @router.get("/me", response_model=MeResponse)
 def me(user: dict = Depends(_current_user)):
     return MeResponse(user=user)
+
+
+@router.post("/profile")
+def profile_update(req: ProfileUpdateRequest, user: dict = Depends(_current_user)):
+    try:
+        updated = update_profile(int(user["id"]), req.name, req.phone, req.avatar)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "user": updated}
+
+
+@router.post("/change-password")
+def change_password_route(req: ChangePasswordRequest, user: dict = Depends(_current_user)):
+    try:
+        updated = store_change_password(int(user["id"]), req.current_password, req.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    # Password change revokes older sessions; hand back a token for the current one.
+    return {"ok": True, "access_token": create_access_token(updated), "user": updated}
 
 
 @router.post("/logout-all")
