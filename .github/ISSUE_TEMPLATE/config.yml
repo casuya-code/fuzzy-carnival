@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/casuya-code/fuzzy-carnival/blob/main/SECURITY.md
+    about: Please report security issues privately, not in a public issue.
+  - name: Contribution guide
+    url: https://github.com/casuya-code/fuzzy-carnival/blob/main/CONTRIBUTING.md
+    about: Branching model, conventional commits, PR checklist and CI checks.

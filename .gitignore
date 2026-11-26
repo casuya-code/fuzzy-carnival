@@ -5,41 +5,60 @@ frontend/node_modules/
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 .venv/
 venv/
 env/
 
-# Environment variables
+# Environment variables (examples are tracked, real env files are not)
 .env
-.env.local
-.env.*.local
-frontend/.env.local
+.env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.local.example
 
-# Cached model weights (large, gitignored)
+# Cached model weights and scratch audio (large, gitignored)
 backend/weights/
 backend/temp_audio/
 
-# Next.js
+# Local databases and SQLite journal sidecars
+backend/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Test, lint and coverage output
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+frontend/coverage/
+.eslintcache
+
+# Build output
+dist/
+build/
+.next/
 frontend/.next/
+out/
 frontend/out/
 *.tsbuildinfo
 
-# OS
-.DS_Store
-Thumbs.db
+# Temporary debug scripts
+_tmp*.py
+_tmp*.ps1
 
 # Logs
 *.log
 npm-debug.log*
 
-# IDE
+# OS and editor files
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
-# Local app data
-backend/data/
-*.db
-*.sqlite
-*.sqlite3

@@ -263,6 +263,16 @@ triggers a cold start (model reload). The frontend shows a "waking up"
 indicator via the backend `/health` endpoint. Keep reference clips short to
 reduce latency.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the branching model, Conventional
+Commit format, PR checklist, issue templates and release tagging. In short:
+branch off `main` as `feature/...` or `fix/...`, keep commits conventional, run
+`python -m pytest -q` in `backend/` plus lint/test/build in `frontend/`, and
+open a PR using `.github/PULL_REQUEST_TEMPLATE.md`. Required CI checks are
+`backend` and `frontend`; dependency audits are report-only. Branch protection
+on `main` still needs a one-time maintainer setup — see CONTRIBUTING.md.
+
 ## License
 
 MIT
