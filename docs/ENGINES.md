@@ -2,7 +2,9 @@
 
 The backend exposes all engines through a common `BaseTTSEngine` interface. The
 frontend lets you pick per request; `backend/app/services/model_manager.py`
-loads and unloads local models to stay within the Railway RAM budget.
+loads and unloads local models to stay within the Railway RAM budget. The API
+process does not warm local weights; the synthesis worker does, and an engine
+whose RAM alone exceeds `MAX_RAM_GB` is refused instead of causing an OOM.
 
 | Engine option | Best use case | Cost / quota (typical) | RAM on Railway | Cloning | Notes |
 |---|---|---|---|---|---|

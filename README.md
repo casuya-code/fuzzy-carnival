@@ -13,7 +13,7 @@ Cloudflare R2 storage, and a FastAPI backend.
 |---|---|
 | **Frontend** | Next.js 14 · TypeScript · React 18 · Tailwind CSS (`frontend/`) |
 | **Backend** | FastAPI · Python 3.11 · SQLite accounts (`backend/`) |
-| **Storage** | Cloudflare R2 via presigned URLs, with local `/static` fallback |
+| **Storage** | Cloudflare R2 via presigned URLs, with local `/static/{outputs,audio,video,thumbs}` fallback |
 | **TTS engines** | Azure AI Speech, ElevenLabs, Kyutai Pocket TTS, AfriSpeech Pocket, Msingi/XTTS-v2, Meta MMS |
 | **Accounts** | Email/password signup & login, signed bearer tokens, protected feature pages, profile and password settings |
 | **Hosting** | Vercel (frontend) + Railway ~$5 Pro (backend) + R2 free tier |
@@ -66,7 +66,7 @@ The full engine comparison and Swahili delivery notes live in
 Request flow: the browser uploads reference media straight to R2, sends text and
 object keys to the backend, and polls/receives output URLs. Without R2
 credentials, uploads use `PUT /api/v1/local-upload/{key}` and outputs are served
-from the backend's `/static` mount.
+from the backend's output-only `/static/{outputs,audio,video,thumbs}` mounts.
 
 ## Prerequisites
 
@@ -160,7 +160,7 @@ copies — `.gitignore` excludes them.
 | Video | `POST /api/v1/video/process`, `/video/process-batch`, `/video/finalize` |
 | Captions | `POST /api/v1/captions/preview`, `/captions/burn`, `POST /api/v1/timeline` |
 | Packaging | `POST /api/v1/packaging/thumbnail`, `/packaging/publish` |
-| Health/static | `GET /health`, `GET /static/...`, `PUT /api/v1/local-upload/{key}` |
+| Health/static | `GET /health`, `GET /ready`, `GET /static/{outputs,audio,video,thumbs}/...`, `PUT /api/v1/local-upload/{key}` |
 
 Full interactive docs are available at `http://127.0.0.1:8000/docs` when the API
 is running.
@@ -173,10 +173,15 @@ is running.
    (uses the repository Dockerfile).
 2. Set backend env vars in the Railway dashboard, especially `API_KEY`,
    `REQUIRE_AUTH=true`, `AUTH_SECRET`, `ALLOWED_ORIGINS` (your Vercel URL),
-   R2 credentials and any TTS keys. Keep `EXPOSE_HEALTH_DETAILS=false`.
-3. `railway.toml` defines the `/health` healthcheck and restart policy. Sleep
-   mode is enabled to save cost; the first request after inactivity cold-starts
-   the service. The frontend shows a "waking up" indicator via `/health`.
+   R2 credentials and any TTS keys. Keep `EXPOSE_HEALTH_DETAILS=false`; the UI still receives the enabled engine list.
+3. `railway.toml` defines the `/ready` healthcheck (readiness, not liveness), the
+   restart policy, and `requiredMountPath = "/app/data"`. Sleep mode is enabled to
+   save cost; the first request after inactivity cold-starts the service. The
+   frontend shows a "waking up" indicator via `/health`.
+4. Create/attach a persistent Railway volume at `/app/data`, then set
+   `APP_DB_PATH=/app/data/app.db` and `RAILWAY_RUN_UID=0` (volumes mount as root
+   while the image runs as `appuser`). Config as Code cannot provision volumes,
+   so this step is done in the Railway dashboard or CLI.
 4. Optional: prefetch weights with `python scripts/download_weights.py` before
    deploying (the Dockerfile also prefetches at build time).
 
