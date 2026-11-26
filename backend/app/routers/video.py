@@ -1,6 +1,11 @@
+import asyncio
+import hashlib
 import logging
+import os
 import shutil
 import subprocess
+import threading
+import time
 import uuid
 from pathlib import Path
 import json
@@ -52,6 +57,8 @@ from app.services.video_transitions import (
 from app.services.video_processor import stitch_clips_with_audio, stitch_silent_clips, trim_and_zoom_clip
 from app.auth import require_api_key
 from app.rate_limit import rate_limit
+from app.services.job_context import check_cancelled, report_progress
+from app.observability import timed
 
 router = APIRouter(prefix="/api/v1/video", tags=["video"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 logger = logging.getLogger(__name__)
@@ -165,6 +172,7 @@ async def process_video(
     outro_sec: Optional[float] = Form(None),
     words_per_chunk: int = Form(DEFAULT_WORDS_PER_CHUNK),
     upscale_2k: bool = Form(False),
+    preview: bool = Form(False),
     loudnorm: bool = Form(False),
     transition: str = Form(DEFAULT_TRANSITION),
     transition_duration_sec: float = Form(DEFAULT_TRANSITION_DURATION_SEC),
@@ -236,6 +244,8 @@ async def process_video(
 
         # Save and process clips in received order
         for i, up in enumerate(clips):
+            check_cancelled()
+            report_progress("clips", 5 + 55 * (i + 1) / max(1, len(clips)))
             suffix = Path(up.filename or f"clip_{i}.mp4").suffix or ".mp4"
             raw_path = str(work_dir / f"raw_{i}{suffix}")
             proc_path = str(work_dir / f"proc_{i}.mp4")
@@ -249,6 +259,7 @@ async def process_video(
                     aspect_ratio=aspect_ratio,
                     zoom_expr=zoom_expr,
                     overlay=overlay_fx,
+                    preview=preview,
                 )
             finally:
                 Path(raw_path).unlink(missing_ok=True)
@@ -299,6 +310,8 @@ async def process_video(
                 "lower_third_duration_sec": max(1.0, min(15.0, float(lower_third_duration_sec))),
             }
 
+        check_cancelled()
+        report_progress("stitching", 65)
         stitch_clips_with_audio(
             processed_paths,
             audio_path,
@@ -318,8 +331,11 @@ async def process_video(
             overlay_opacity=overlay_opacity,
             overlay=overlay_fx,
             font_path=font_path,
+            preview=preview,
         )
 
+        check_cancelled()
+        report_progress("uploading", 92)
         r2_key = build_video_r2_key("Video_Master16x9", language, topic, "mp4")
         url = upload_output(final_path, r2_key)
         duration = get_duration(final_path)
@@ -329,6 +345,7 @@ async def process_video(
             "video_url": url,
             "duration_seconds": duration,
             "clips_processed": len(processed_paths),
+            "preview": preview,
             "transition_sfx": sfx,
             "transition_sfx_level": sfx_level,
             "overlay": overlay_fx,
@@ -366,6 +383,7 @@ async def process_video_batch(
     transition_duration_sec: float = Form(DEFAULT_TRANSITION_DURATION_SEC),
     transitions: Optional[str] = Form(None),
     overlay: str = Form(DEFAULT_EFFECT_OVERLAY),
+    preview: bool = Form(False),
 ):
     """Process a batch of clips (trim + zoom) and return one stitched silent intermediate video.
 
@@ -410,6 +428,8 @@ async def process_video_batch(
         zoom_expr, bpm_used = _beat_sync_zoom(audio_path=batch_audio_path, bpm=bpm)
 
         for i, up in enumerate(clips):
+            check_cancelled()
+            report_progress("clips", 5 + 65 * (i + 1) / max(1, len(clips)))
             suffix = Path(up.filename or f"clip_{i}.mp4").suffix or ".mp4"
             raw_path = str(work_dir / f"raw_{i}{suffix}")
             proc_path = str(work_dir / f"proc_{i}.mp4")
@@ -423,6 +443,7 @@ async def process_video_batch(
                     aspect_ratio=aspect_ratio,
                     zoom_expr=zoom_expr,
                     overlay=overlay_fx,
+                    preview=preview,
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed processing clip {i + 1}: {e}")
@@ -430,6 +451,8 @@ async def process_video_batch(
                 Path(raw_path).unlink(missing_ok=True)
             processed_paths.append(proc_path)
 
+        check_cancelled()
+        report_progress("stitching", 75)
         stitch_silent_clips(
             processed_paths,
             batch_path,
@@ -439,6 +462,8 @@ async def process_video_batch(
             overlay=overlay_fx,
         )
 
+        check_cancelled()
+        report_progress("uploading", 92)
         r2_key = build_video_r2_key("Video_Batch", language, topic, "mp4")
         url = upload_output(batch_path, r2_key)
         duration = get_duration(batch_path)
@@ -449,6 +474,7 @@ async def process_video_batch(
             "duration_seconds": duration,
             "clips_processed": len(processed_paths),
             "intermediate": True,
+            "preview": preview,
             "bpm": bpm_used,
             "zoom_synced": zoom_expr is not None,
         }
@@ -476,6 +502,7 @@ async def finalize_video(
     outro_sec: Optional[float] = Form(None),
     words_per_chunk: int = Form(DEFAULT_WORDS_PER_CHUNK),
     upscale_2k: bool = Form(False),
+    preview: bool = Form(False),
     loudnorm: bool = Form(False),
     transition: str = Form(DEFAULT_TRANSITION),
     transition_duration_sec: float = Form(DEFAULT_TRANSITION_DURATION_SEC),
@@ -551,6 +578,8 @@ async def finalize_video(
 
         # Download segment videos in order
         for i, key in enumerate(segment_keys):
+            check_cancelled()
+            report_progress("downloading", 5 + 25 * (i + 1) / max(1, len(segment_keys)))
             seg_path = download_reference(key, dest=work_dir / f"seg_{i}{Path(key).suffix or '.mp4'}")
             segment_paths.append(seg_path)
 
@@ -597,6 +626,8 @@ async def finalize_video(
                 "lower_third_duration_sec": max(1.0, min(15.0, float(lower_third_duration_sec))),
             }
 
+        check_cancelled()
+        report_progress("stitching", 35)
         stitch_clips_with_audio(
             segment_paths,
             audio_path,
@@ -616,8 +647,11 @@ async def finalize_video(
             overlay_opacity=overlay_opacity,
             overlay=overlay_fx,
             font_path=font_path,
+            preview=preview,
         )
 
+        check_cancelled()
+        report_progress("uploading", 92)
         r2_key = build_video_r2_key("Video_Master16x9", language, topic, "mp4")
         url = upload_output(final_path, r2_key)
         duration = get_duration(final_path)
@@ -627,6 +661,7 @@ async def finalize_video(
             "video_url": url,
             "duration_seconds": duration,
             "clips_processed": len(segment_paths),
+            "preview": preview,
             "transition_sfx": sfx,
             "transition_sfx_level": sfx_level,
             "overlay": overlay_fx,

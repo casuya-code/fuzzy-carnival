@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from app.observability import record, timed
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,14 +47,32 @@ def _worker_loop(job_q: mp.Queue, result_q: mp.Queue) -> None:
         job = job_q.get()
         if job is None:
             return
-        job_id, req_dict = job
+        is_warm = len(job) == 4 and job[3] == "warm"
+        if len(job) >= 3:
+            job_id, req_dict, enqueued_at = job[:3]
+        else:
+            job_id, req_dict = job
+            enqueued_at = None
+        started = time.time()
+        if enqueued_at is not None:
+            record("tts.queue", (started - float(enqueued_at)) * 1000, worker_pid=os.getpid())
         try:
+            if is_warm:
+                # Internal RPC: warm the process that actually runs local synthesis.
+                engine_name = req_dict.get("engine")
+                with timed("tts.warm", engine=engine_name, process="worker"):
+                    get_manager().get(engine_name)
+                record("tts.worker_result", (time.time() - started) * 1000, ok=True, kind="warm")
+                result_q.put((job_id, SynthesisJobResult(ok=True, value={"warmed": True})))
+                continue
             req = SynthesizeRequest.model_validate(req_dict)
             # No cancel_event inside worker; cancellation is handled by terminating process.
             res = _synthesize_sync(req, request=None, cancel_event=None)
             payload = res.model_dump() if hasattr(res, "model_dump") else res.dict()
+            record("tts.worker_result", (time.time() - started) * 1000, ok=True)
             result_q.put((job_id, SynthesisJobResult(ok=True, value=payload)))
         except Exception as e:
+            record("tts.worker_result", (time.time() - started) * 1000, ok=False, error_type=type(e).__name__)
             status = getattr(e, "status_code", None)
             detail = getattr(e, "detail", None)
             msg = detail if isinstance(detail, str) else str(e)
@@ -153,6 +173,38 @@ class SynthesisWorker:
             "last_error": self._last_error,
         }
 
+    def warm(self, engine: str, *, timeout_sec: float = 30.0) -> bool:
+        """Pre-load an engine in the worker process (where local synthesis runs)."""
+        self._ensure_started()
+        assert self._job_q is not None and self._result_q is not None and self._proc is not None
+        job_id = uuid.uuid4().hex
+        deadline = time.monotonic() + max(1.0, float(timeout_sec))
+        try:
+            self._job_q.put((job_id, {"engine": engine}, time.time(), "warm"), timeout=5)
+        except Exception as e:
+            self._last_error = str(e)
+            self.restart()
+            return False
+        while True:
+            if time.monotonic() >= deadline:
+                return False
+            if self._proc is None or not self._proc.is_alive():
+                self.restart()
+                return False
+            try:
+                got_id, result = self._result_q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                self._last_error = str(e)
+                self.restart()
+                return False
+            if got_id != job_id:
+                # A synthesis result may arrive while warming; keep it for its owner.
+                self._result_q.put((got_id, result))
+                continue
+            return bool(result.ok)
+
     def submit(
         self,
         req_dict: dict[str, Any],
@@ -166,7 +218,7 @@ class SynthesisWorker:
         job_id = uuid.uuid4().hex
         deadline = time.monotonic() + max(1.0, float(timeout_sec))
         try:
-            self._job_q.put((job_id, req_dict), timeout=5)
+            self._job_q.put((job_id, req_dict, time.time()), timeout=5)
         except Exception as e:
             self._last_error = str(e)
             self.restart()

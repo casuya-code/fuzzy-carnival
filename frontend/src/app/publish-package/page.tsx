@@ -4,9 +4,18 @@ import RequireAuth from "@/components/RequireAuth";
 
 
 
+import dynamic from "next/dynamic";
+
 import { Suspense, useEffect, useRef, useState } from "react";
 
 import { useSearchParams } from "next/navigation";
+
+const TextStylePicker = dynamic(() => import("@/components/TextStylePicker"), {
+  ssr: false,
+
+  loading: () => <p className="text-sm text-gray-500">Loading text styles…</p>,
+
+});
 
 import { type Language, PackageResult, previewThumbnail, publishPackage, detectBpm } from "@/lib/api";
 
@@ -15,8 +24,6 @@ import { addDeliverable, getDeliverableById, loadSpeechHistory, loadVideoHistory
 import { getMediaDuration } from "@/lib/media";
 
 import InfoTip from "@/components/InfoTip";
-
-import TextStylePicker from "@/components/TextStylePicker";
 
 import {
 

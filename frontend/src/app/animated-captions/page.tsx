@@ -4,15 +4,22 @@ import RequireAuth from "@/components/RequireAuth";
 
 
 
+import dynamic from "next/dynamic";
+
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { useSearchParams } from "next/navigation";
 
+const TextStylePicker = dynamic(() => import("@/components/TextStylePicker"), {
+  ssr: false,
+
+  loading: () => <p className="text-sm text-gray-500">Loading caption styles…</p>,
+
+});
+
 import InfoTip from "@/components/InfoTip";
 
 import PlatformAspectPicker from "@/components/PlatformAspectPicker";
-
-import TextStylePicker from "@/components/TextStylePicker";
 
 import {
 

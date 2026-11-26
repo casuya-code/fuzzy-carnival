@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from app.observability import timed
+
 
 class BaseTTSEngine(ABC):
     """Shared abstract base for all TTS engines."""
@@ -45,4 +47,5 @@ class BaseTTSEngine(ABC):
 
     def ensure_loaded(self) -> None:
         if not self.is_loaded:
-            self.load()
+            with timed("tts.model_load", engine=self.name):
+                self.load()

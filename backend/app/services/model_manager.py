@@ -6,6 +6,9 @@ Railway $5 container stays under its RAM budget.
 
 import gc
 import threading
+import time
+
+from app.observability import record, timed
 
 from app.config import (
     ENABLE_AFRISPEECH,
@@ -45,8 +48,9 @@ class ModelManager:
         }
         self._disabled = {name for name, (_, enabled) in factories.items() if not enabled}
         self._loaded: set[str] = set()
+        self._last_used: dict[str, float] = {}
         self._lock = threading.RLock()
-        # Unload other engines before loading one heavier than this budget slice.
+        # Evict least-recently-used local engines only when the RAM budget needs it.
         self._heavy_ram_gb = min(HEAVY_ENGINE_RAM_GB, MAX_RAM_GB)
         self._warmup_status: dict[str, str] = {}
         self._warmup_errors: dict[str, str] = {}
@@ -60,14 +64,30 @@ class ModelManager:
             engine = self.engines[name]
 
             # Cloud engines use 0 local RAM; never evict local models for them.
-            # If requesting a heavy local model, unload other local engines to free RAM.
-            if name not in CLOUD_ENGINES and engine.ram_gb >= self._heavy_ram_gb:
-                for other_name in list(self._loaded):
-                    if other_name != name and other_name not in CLOUD_ENGINES:
+            # Unload only as many least-recently-used local engines as the RAM budget requires.
+            evicted: list[str] = []
+            if name not in CLOUD_ENGINES:
+                current = sum(
+                    self.engines[other].ram_gb
+                    for other in self._loaded
+                    if other != name and other not in CLOUD_ENGINES
+                )
+                if current + engine.ram_gb > MAX_RAM_GB:
+                    lru = sorted(
+                        (n for n in self._loaded if n != name and n not in CLOUD_ENGINES),
+                        key=lambda n: self._last_used.get(n, 0.0),
+                    )
+                    for other_name in lru:
                         self._unload(other_name)
+                        evicted.append(other_name)
+                        current -= self.engines[other_name].ram_gb
+                        if current + engine.ram_gb <= MAX_RAM_GB:
+                            break
 
-            engine.ensure_loaded()
+            with timed("tts.engine_get", engine=name, evicted=",".join(evicted) or None):
+                engine.ensure_loaded()
             self._loaded.add(name)
+            self._last_used[name] = time.monotonic()
             return engine
 
     def warm_async(self) -> None:
@@ -80,14 +100,20 @@ class ModelManager:
             ):
                 if not enabled or not should_warm:
                     continue
-                self._warmup_status[name] = "warming"
+                with self._lock:
+                    self._warmup_status[name] = "warming"
+                started = time.perf_counter()
                 try:
                     self.get(name)
-                    self._warmup_status[name] = "ready"
-                    self._warmup_errors.pop(name, None)
+                    with self._lock:
+                        self._warmup_status[name] = "ready"
+                        self._warmup_errors.pop(name, None)
+                    record("tts.warm", (time.perf_counter() - started) * 1000, engine=name, status="ready")
                 except Exception as e:
-                    self._warmup_status[name] = "failed"
-                    self._warmup_errors[name] = str(e)
+                    with self._lock:
+                        self._warmup_status[name] = "failed"
+                        self._warmup_errors[name] = str(e)
+                    record("tts.warm", (time.perf_counter() - started) * 1000, engine=name, status="failed")
 
         threading.Thread(target=_warm, daemon=True).start()
 
@@ -107,6 +133,7 @@ class ModelManager:
         except Exception:
             pass
         self._loaded.discard(name)
+        self._last_used.pop(name, None)
         gc.collect()
         # Best-effort CUDA cleanup only when torch is available (local GPU setups).
         try:

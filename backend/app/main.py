@@ -22,7 +22,18 @@ from app.config import (
     SERVE_STATIC,
     TEMP_AUDIO_DIR,
 )
-from app.routers import auth, captions, packaging, storage, synthesize, text, timeline, video
+from app.routers import (
+    auth,
+    captions,
+    observability,
+    packaging,
+    storage,
+    synthesize,
+    text,
+    timeline,
+    video,
+    video_jobs,
+)
 from app.schemas.tts import HealthResponse
 
 logger = logging.getLogger(__name__)
@@ -92,10 +103,12 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(observability.router)
 app.include_router(synthesize.router)
 app.include_router(storage.router)
 app.include_router(text.router)
 app.include_router(video.router)
+app.include_router(video_jobs.router)
 app.include_router(captions.router)
 app.include_router(packaging.router)
 app.include_router(timeline.router)

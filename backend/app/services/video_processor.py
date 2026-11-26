@@ -1,5 +1,6 @@
-import subprocess
 from pathlib import Path
+
+from app.services.job_context import check_cancelled, run_ffmpeg
 
 from app.config import (
     DEFAULT_TRIM_END_SEC,
@@ -48,6 +49,17 @@ from app.services.video_transitions import (
 
 __all__ = ["get_duration", "trim_and_zoom_clip", "stitch_clips_with_audio", "stitch_silent_clips"]
 
+PREVIEW_WIDTH = 480
+_PREVIEW_PRESET = "ultrafast"
+_PREVIEW_CRF = "28"
+
+
+def preview_dims(aspect_ratio: str) -> tuple[int, int]:
+    """Low-resolution dimensions for quick previews (final renders are unchanged)."""
+    zone = SAFE_ZONES.get(aspect_ratio, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
+    height = int(round(PREVIEW_WIDTH * zone["h"] / zone["w"] / 2) * 2)
+    return PREVIEW_WIDTH, max(2, height)
+
 
 def trim_and_zoom_clip(
     input_path: str,
@@ -57,18 +69,21 @@ def trim_and_zoom_clip(
     fps: int = 30,
     zoom_expr: str | None = None,
     overlay: str = DEFAULT_EFFECT_OVERLAY,
+    preview: bool = False,
 ) -> str:
     """
     1. Cuts off the last trim_end_sec to remove AI video warping (via -t, not -sseof).
     2. Applies a smooth 2.5-second dynamic punch-in zoom for retention.
     3. Optionally applies a visual effect overlay.
     """
+    check_cancelled()
     raw_duration = get_duration(input_path)
     clean_duration = max(0.5, raw_duration - trim_end_sec)
 
     # Target dimensions come from the shared safe-zone table (single source of truth)
     zone = SAFE_ZONES.get(aspect_ratio, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
-    target_w, target_h = zone["w"], zone["h"]
+    target_w, target_h = preview_dims(aspect_ratio) if preview else (zone["w"], zone["h"])
+    source_w, source_h = (target_w, target_h) if preview else (target_w * 2, target_h * 2)
 
     # 75 frames = 2.5 seconds at 30fps (default). When a beat-synced
     # expression is supplied it overrides this static cycle.
@@ -78,8 +93,8 @@ def trim_and_zoom_clip(
     overlay_fx = effect_overlay_filter(overlay)
     vf_parts = [
         f"fps={fps}",
-        f"scale={target_w*2}:{target_h*2}:force_original_aspect_ratio=increase",
-        f"crop={target_w*2}:{target_h*2}",
+        f"scale={source_w}:{source_h}:force_original_aspect_ratio=increase",
+        f"crop={source_w}:{source_h}",
         (
             f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d=1:s={target_w}x{target_h}:fps={fps}"
@@ -97,8 +112,8 @@ def trim_and_zoom_clip(
         "-vf", vf_filter,
         "-an",  # Strip silent AI video audio track
         "-c:v", "libx264",
-        "-preset", SOCIAL_VIDEO_PRESET,
-        "-crf", str(SOCIAL_VIDEO_CRF),
+        "-preset", _PREVIEW_PRESET if preview else SOCIAL_VIDEO_PRESET,
+        "-crf", _PREVIEW_CRF if preview else str(SOCIAL_VIDEO_CRF),
         "-maxrate", SOCIAL_MAXRATE,
         "-bufsize", SOCIAL_BUFSIZE,
         "-pix_fmt", "yuv420p",
@@ -109,7 +124,7 @@ def trim_and_zoom_clip(
         output_path,
     ]
 
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    run_ffmpeg(cmd)
     return output_path
 
 
@@ -124,6 +139,7 @@ def _stitch_video_silent(
     """Join processed clips with native xfade transitions into one silent MP4."""
     if not processed_clips:
         raise ValueError("At least one processed clip is required")
+    check_cancelled()
 
     overlay = normalize_effect_overlay(overlay)
     overlay_fx = effect_overlay_filter(overlay)
@@ -135,15 +151,14 @@ def _stitch_video_silent(
 
     # A single clip needs no filtergraph; keep the old fast stream-copy path.
     if len(processed_clips) == 1 and not overlay_fx:
-        subprocess.run(
+        run_ffmpeg(
             ["ffmpeg", "-nostdin", "-y", *command_inputs, "-an", "-c", "copy",
-             "-movflags", "+faststart", final_output_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+             "-movflags", "+faststart", final_output_path]
         )
         return final_output_path
 
     if len(processed_clips) == 1:
-        subprocess.run([
+        run_ffmpeg([
             "ffmpeg", "-nostdin", "-y", *command_inputs,
             "-vf", f"{overlay_fx},format=yuv420p",
             "-an", "-c:v", "libx264", "-preset", SOCIAL_VIDEO_PRESET,
@@ -151,7 +166,7 @@ def _stitch_video_silent(
             "-bufsize", SOCIAL_BUFSIZE, "-pix_fmt", "yuv420p",
             "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
             "-movflags", "+faststart", final_output_path,
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        ])
         return final_output_path
 
     durations = [get_duration(clip) for clip in processed_clips]
@@ -165,7 +180,7 @@ def _stitch_video_silent(
         filtergraph = f"{filtergraph};[{final_label}]{overlay_fx},format=yuv420p[vfx]"
         out_label = "vfx"
 
-    subprocess.run([
+    run_ffmpeg([
         "ffmpeg", "-nostdin", "-y",
         *command_inputs,
         "-filter_complex", filtergraph,
@@ -182,7 +197,7 @@ def _stitch_video_silent(
         "-color_trc", "bt709",
         "-movflags", "+faststart",
         final_output_path,
-    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    ])
     return final_output_path
 
 
@@ -205,6 +220,7 @@ def stitch_clips_with_audio(
     overlay_opacity: int = DEFAULT_OVERLAY_OPACITY,
     overlay: str = DEFAULT_EFFECT_OVERLAY,
     font_path: str | None = None,
+    preview: bool = False,
 ) -> str:
     """
     Joins trimmed & zoomed clips with xfade transitions, then attaches audio.
@@ -213,6 +229,7 @@ def stitch_clips_with_audio(
     If ass_path is provided, the captions are burned in the SAME final pass
     (libass via -vf) instead of re-encoding the video a second time afterwards.
     """
+    check_cancelled()
     work_dir = str(Path(final_output_path).parent)
     sfx_path = ""
 
@@ -229,16 +246,20 @@ def stitch_clips_with_audio(
         )
 
         # Step 2: Combine stitched video, local overlay, and unified audio in one pass.
-        upscale_dims = _upscale_dims(aspect_ratio, upscale_2k)
+        # A quick preview deliberately bypasses 2K upscaling and uses low-res output.
+        upscale_dims = None if preview else _upscale_dims(aspect_ratio, upscale_2k)
+        preview_frame = preview_dims(aspect_ratio) if preview else None
         use_overlay = bool(overlay_image_path and Path(overlay_image_path).is_file())
         vf_parts: list[str] = []
         if ass_path:
             fontsdir = str(Path(font_path).parent) if font_path and Path(font_path).is_file() else None
             vf_parts.append(ass_filter_arg(ass_path, working_dir=work_dir, fontsdir=fontsdir))
-        if upscale_dims:
+        if preview_frame:
+            vf_parts.append(f"scale={preview_frame[0]}:{preview_frame[1]}:flags=bilinear")
+        elif upscale_dims:
             vf_parts.append(f"scale={upscale_dims[0]}:{upscale_dims[1]}:flags=lanczos")
         vf_parts.append("format=yuv420p")
-        must_encode_video = bool(ass_path or upscale_dims or use_overlay)
+        must_encode_video = bool(ass_path or upscale_dims or preview_frame or use_overlay)
 
         sfx_path = str(Path(final_output_path).with_name("transition_sfx.wav"))
         sfx_kind = normalize_sfx(transition_sfx)
@@ -275,8 +296,8 @@ def stitch_clips_with_audio(
         if must_encode_video:
             cmd += [
                 "-c:v", "libx264",
-                "-preset", SOCIAL_VIDEO_PRESET,
-                "-crf", str(SOCIAL_VIDEO_CRF),
+                "-preset", _PREVIEW_PRESET if preview else SOCIAL_VIDEO_PRESET,
+                "-crf", _PREVIEW_CRF if preview else str(SOCIAL_VIDEO_CRF),
                 "-maxrate", SOCIAL_MAXRATE,
                 "-bufsize", SOCIAL_BUFSIZE,
                 "-pix_fmt", "yuv420p",
@@ -295,7 +316,7 @@ def stitch_clips_with_audio(
 
         if use_overlay:
             zone = SAFE_ZONES.get(aspect_ratio, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
-            frame_w, frame_h = upscale_dims or (zone["w"], zone["h"])
+            frame_w, frame_h = preview_frame or upscale_dims or (zone["w"], zone["h"])
             image_filter, placement_filter = build_overlay_filters(
                 overlay_position, overlay_size, overlay_opacity, frame_w, frame_h
             )
@@ -334,7 +355,7 @@ def stitch_clips_with_audio(
             "-shortest",  # Stops when audio (voiceover + outro) finishes
             final_output_path,
         ]
-        subprocess.run(cmd, cwd=work_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        run_ffmpeg(cmd, cwd=work_dir)
     finally:
         for temp in (stitched_silent, sfx_path):
             try:

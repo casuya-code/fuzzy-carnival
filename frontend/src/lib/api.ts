@@ -1,4 +1,5 @@
 import type { LowerThird, TextStyle } from "@/lib/textStyles";
+import { measured, reportMetric } from "@/lib/performance";
 
 /** Single source of truth for the backend origin (used by every client). */
 export const API_BASE = (
@@ -221,17 +222,40 @@ export async function synthesize(
   payload: SynthesizeRequest,
   signal?: AbortSignal
 ): Promise<SynthesizeResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/synthesize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
-    body: JSON.stringify(payload),
-    signal,
-  });
-  if (!res.ok) {
-    const detail = extractDetail(await res.text());
-    throw new Error(detail || `Synthesis failed (${res.status})`);
+  const started = performance.now();
+  let status = "ok";
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/synthesize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!res.ok) {
+      status = "error";
+      const detail = extractDetail(await res.text());
+      throw new Error(detail || `Synthesis failed (${res.status})`);
+    }
+    const data = await res.json();
+    reportSpeechTiming(payload, data, started);
+    return data;
+  } catch (e) {
+    reportMetric("speech.generate", performance.now() - started, {
+      engine: (payload as { engine?: string }).engine || "default",
+      language: payload.language || "en",
+      status,
+    });
+    throw e;
   }
-  return res.json();
+}
+
+function reportSpeechTiming(payload: SynthesizeRequest, data: SynthesizeResponse, started: number) {
+  reportMetric("speech.generate", performance.now() - started, {
+    engine: data.engine_used || (payload as { engine?: string }).engine || "default",
+    language: payload.language || "en",
+    cache_hit: Boolean((data as { cache_hit?: boolean }).cache_hit),
+    status: "ok",
+  });
 }
 
 export async function normalizePreview(
@@ -275,13 +299,15 @@ export async function requestUploadUrl(
 }
 
 export async function uploadToR2(uploadUrl: string, file: Blob, contentType: string) {
-  const res = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": contentType },
-    body: file,
+  return measured("upload.blob", { kind: "r2" }, async () => {
+    const res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: file,
+    });
+    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+    return true;
   });
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-  return true;
 }
 
 /** Upload to the backend's local-upload endpoint (dev fallback when R2 is unset). */
@@ -291,16 +317,18 @@ export async function uploadLocalBlob(
   contentType: string
 ): Promise<string> {
   const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-  const res = await fetch(
-    `${API_BASE}/api/v1/local-upload/${encodedKey}`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": contentType, ...backendAuthHeaders() },
-      body: file,
-    }
-  );
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-  return key;
+  return measured("upload.blob", { kind: "local" }, async () => {
+    const res = await fetch(
+      `${API_BASE}/api/v1/local-upload/${encodedKey}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": contentType, ...backendAuthHeaders() },
+        body: file,
+      }
+    );
+    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+    return key;
+  });
 }
 
 export async function mixAudio(payload: {
@@ -399,6 +427,8 @@ export async function burnCaptions(payload: {
   topic?: string;
   language?: string;
   upscale_2k?: boolean;
+  /** Explicit quick low-resolution preview; final renders stay full quality. */
+  preview?: boolean;
   loudnorm?: boolean;
   caption_style?: TextStyle;
   lower_third?: LowerThird;
@@ -481,6 +511,7 @@ export async function processVideoBatch(payload: {
   transition_duration_sec?: number;
   transitions?: string[];
   overlay?: string;
+  preview?: boolean;
 }): Promise<VideoBatchResult> {
   const fd = new FormData();
   payload.clips.forEach((c) => fd.append("clips", c, c.name));
@@ -495,16 +526,19 @@ export async function processVideoBatch(payload: {
   if (payload.transition_duration_sec != null) fd.append("transition_duration_sec", String(payload.transition_duration_sec));
   if (payload.transitions) fd.append("transitions", JSON.stringify(payload.transitions));
   if (payload.overlay) fd.append("overlay", payload.overlay);
-  const res = await fetch(`${API_BASE}/api/v1/video/process-batch`, {
-    method: "POST",
-    body: fd,
-    headers: backendAuthHeaders(),
+  if (payload.preview) fd.append("preview", "true");
+  return measured("video.render", { kind: "batch" }, async () => {
+    const res = await fetch(`${API_BASE}/api/v1/video/process-batch`, {
+      method: "POST",
+      body: fd,
+      headers: backendAuthHeaders(),
+    });
+    if (!res.ok) {
+      const detail = extractDetail(await res.text());
+      throw new Error(detail || `Video batch processing failed (${res.status})`);
+    }
+    return res.json();
   });
-  if (!res.ok) {
-    const detail = extractDetail(await res.text());
-    throw new Error(detail || `Video batch processing failed (${res.status})`);
-  }
-  return res.json();
 }
 
 export async function finalizeVideo(payload: {
@@ -519,6 +553,8 @@ export async function finalizeVideo(payload: {
   outro_sec?: number;
   words_per_chunk?: number;
   upscale_2k?: boolean;
+  /** Explicit quick low-resolution preview; final renders stay full quality. */
+  preview?: boolean;
   loudnorm?: boolean;
   transition?: string;
   transition_duration_sec?: number;
@@ -564,16 +600,19 @@ export async function finalizeVideo(payload: {
   if (payload.lower_third) fd.append("lower_third", JSON.stringify(payload.lower_third));
   if (payload.lower_third_duration_sec != null) fd.append("lower_third_duration_sec", String(payload.lower_third_duration_sec));
   if (payload.font_path) fd.append("font_path", payload.font_path);
-  const res = await fetch(`${API_BASE}/api/v1/video/finalize`, {
-    method: "POST",
-    body: fd,
-    headers: backendAuthHeaders(),
+  if (payload.preview) fd.append("preview", "true");
+  return measured("video.render", { kind: "finalize" }, async () => {
+    const res = await fetch(`${API_BASE}/api/v1/video/finalize`, {
+      method: "POST",
+      body: fd,
+      headers: backendAuthHeaders(),
+    });
+    if (!res.ok) {
+      const detail = extractDetail(await res.text());
+      throw new Error(detail || `Video finalize failed (${res.status})`);
+    }
+    return res.json();
   });
-  if (!res.ok) {
-    const detail = extractDetail(await res.text());
-    throw new Error(detail || `Video finalize failed (${res.status})`);
-  }
-  return res.json();
 }
 
 export async function processVideo(payload: {
@@ -589,6 +628,8 @@ export async function processVideo(payload: {
   outro_sec?: number;
   words_per_chunk?: number;
   upscale_2k?: boolean;
+  /** Explicit quick low-resolution preview; final renders stay full quality. */
+  preview?: boolean;
   loudnorm?: boolean;
   transition?: string;
   transition_duration_sec?: number;
@@ -641,16 +682,120 @@ export async function processVideo(payload: {
   if (payload.lower_third) fd.append("lower_third", JSON.stringify(payload.lower_third));
   if (payload.lower_third_duration_sec != null) fd.append("lower_third_duration_sec", String(payload.lower_third_duration_sec));
   if (payload.font_path) fd.append("font_path", payload.font_path);
-  const res = await fetch(`${API_BASE}/api/v1/video/process`, {
-    method: "POST",
-    body: fd,
+  if (payload.preview) fd.append("preview", "true");
+  return measured("video.render", { kind: "process" }, async () => {
+    const res = await fetch(`${API_BASE}/api/v1/video/process`, {
+      method: "POST",
+      body: fd,
+      headers: backendAuthHeaders(),
+    });
+    if (!res.ok) {
+      const detail = extractDetail(await res.text());
+      throw new Error(detail || `Video processing failed (${res.status})`);
+    }
+    return res.json();
+  });
+}
+
+export interface VideoJobAccepted {
+  job_id: string;
+  status: string;
+  status_url: string;
+}
+
+export interface VideoJobStatus {
+  job_id: string;
+  kind: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  progress: number;
+  stage: string;
+  result?: VideoProcessResult;
+  error?: string;
+  error_status?: number;
+}
+
+function formDataFrom(payload: Record<string, unknown>): FormData {
+  const fd = new FormData();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value == null || value === "") continue;
+    if (value instanceof File) {
+      fd.append(key, value, value.name);
+    } else if (Array.isArray(value)) {
+      if (key === "clips") value.forEach((f) => fd.append(key, f as File, (f as File).name));
+      else fd.append(key, JSON.stringify(value));
+    } else if (typeof value === "object") {
+      fd.append(key, JSON.stringify(value));
+    } else {
+      fd.append(key, String(value));
+    }
+  }
+  return fd;
+}
+
+/** Submit a render as a background job. Payload matches the sync API payloads. */
+export function submitVideoJob(
+  kind: "process" | "batch" | "finalize",
+  payload: Record<string, unknown>,
+): Promise<VideoJobAccepted> {
+  return measured("video.job.submit", { kind }, async () => {
+    const res = await fetch(`${API_BASE}/api/v1/video/jobs/${kind}`, {
+      method: "POST",
+      body: formDataFrom(payload),
+      headers: backendAuthHeaders(),
+    });
+    if (!res.ok) {
+      const detail = extractDetail(await res.text());
+      throw new Error(detail || `Video job submission failed (${res.status})`);
+    }
+    return res.json();
+  });
+}
+
+export async function getVideoJob(jobId: string): Promise<VideoJobStatus> {
+  const res = await fetch(`${API_BASE}/api/v1/video/jobs/${encodeURIComponent(jobId)}`, {
     headers: backendAuthHeaders(),
   });
-  if (!res.ok) {
-    const detail = extractDetail(await res.text());
-    throw new Error(detail || `Video processing failed (${res.status})`);
-  }
+  if (!res.ok) throw new Error(`Job status failed (${res.status})`);
   return res.json();
+}
+
+export async function cancelVideoJob(jobId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/video/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+    headers: backendAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(`Job cancel failed (${res.status})`);
+}
+
+/** Poll a background render until it reaches a terminal state. */
+export async function waitForVideoJob(
+  jobId: string,
+  options: {
+    signal?: AbortSignal;
+    intervalMs?: number;
+    timeoutMs?: number;
+    onProgress?: (status: VideoJobStatus) => void;
+  } = {},
+): Promise<VideoJobStatus> {
+  const started = performance.now();
+  const interval = options.intervalMs ?? 1000;
+  const timeout = options.timeoutMs ?? 900_000;
+  while (true) {
+    if (options.signal?.aborted) throw new Error("Video job cancelled");
+    if (performance.now() - started > timeout) throw new Error("Video job timed out");
+    const status = await getVideoJob(jobId);
+    options.onProgress?.(status);
+    if (["succeeded", "failed", "cancelled"].includes(status.status)) {
+      reportMetric("video.job.total", performance.now() - started, {
+        kind: status.kind,
+        status: status.status,
+      });
+      if (status.status === "failed") throw new Error(status.error || "Video job failed");
+      if (status.status === "cancelled") throw new Error("Video job cancelled");
+      return status;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, interval));
+  }
 }
 
 export interface PackageResult {
@@ -722,6 +867,8 @@ export async function publishPackage(payload: {
   topic?: string;
   language?: string;
   upscale_2k?: boolean;
+  /** Explicit quick low-resolution preview; final renders stay full quality. */
+  preview?: boolean;
   loudnorm?: boolean;
   text_style?: TextStyle;
   lower_third?: LowerThird;

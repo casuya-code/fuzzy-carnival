@@ -2,6 +2,7 @@
 
 import RequireAuth from "@/components/RequireAuth";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import {
   checkHealth,
@@ -16,12 +17,23 @@ import {
   warmEngine,
 } from "@/lib/api";
 import { addSpeechHistory, loadSpeechHistory, removeSpeechHistory, updateSpeechHistory } from "@/lib/history";
-import VoiceRecorder from "@/components/VoiceRecorder";
 import EngineSelector from "@/components/EngineSelector";
 import TextToSpeechForm from "@/components/TextToSpeechForm";
-import AudioPlayer from "@/components/AudioPlayer";
-import SpeechTimelineSidebar from "@/components/SpeechTimelineSidebar";
 import InfoTip from "@/components/InfoTip";
+
+// Heavy editor subtrees load only when this page opens; the home page stays lean.
+const VoiceRecorder = dynamic(() => import("@/components/VoiceRecorder"), {
+  ssr: false,
+  loading: () => <p className="text-sm text-gray-500">Loading voice recorder…</p>,
+});
+const AudioPlayer = dynamic(() => import("@/components/AudioPlayer"), {
+  ssr: false,
+  loading: () => <p className="text-sm text-gray-500">Loading audio player…</p>,
+});
+const SpeechTimelineSidebar = dynamic(() => import("@/components/SpeechTimelineSidebar"), {
+  ssr: false,
+  loading: () => <p className="text-sm text-gray-500">Loading timeline…</p>,
+});
 
 export default function TextToSpeechPage() {
   const [language, setLanguage] = useState<"en" | "sw">("en");

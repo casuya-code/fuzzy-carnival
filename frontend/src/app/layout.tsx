@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import { AuthProvider } from "@/components/AuthProvider";
+import PerformanceReporter from "@/components/PerformanceReporter";
 
 export const metadata: Metadata = {
   title: "Yakodonyo Studio",
@@ -17,6 +18,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
+        <PerformanceReporter />
         <AuthProvider>
           <div className="md:flex md:min-h-screen md:items-start">
             <Sidebar />

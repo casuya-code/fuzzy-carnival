@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 import re
+import sys
 import time
 import threading
 import uuid
@@ -48,6 +49,7 @@ from app.services.text_normalizer import normalize_text
 from app.services.timeline_service import estimate_timeline
 from app.auth import require_api_key
 from app.rate_limit import rate_limit
+from app.observability import record, timed
 
 router = APIRouter(prefix="/api/v1", tags=["synthesize"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
 logger = logging.getLogger(__name__)
@@ -426,6 +428,10 @@ def _run_synthesis(
 
 
 def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, cancel_event: threading.Event | None = None, lock_already_held: bool = False):
+    started = time.perf_counter()
+    requested_engine_name = req.engine
+    cache_hit = False
+    effective_engine = req.engine
     acquired_here = False
     if not lock_already_held:
         if not _synthesize_lock.acquire(blocking=False):
@@ -451,10 +457,13 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         cache_key = _make_cache_key(engine_name, req, text)
         cached_hit = _lookup_cached_result(cache_key, skip_cache=req.skip_cache)
         if cached_hit is not None:
+            cache_hit = True
+            effective_engine = engine_name
             return cached_hit
 
         # Prepare reference audio (cached by voice key) for local cloning engines only
-        ref_path = _prepare_reference(req, engine_name)
+        with timed("tts.stage.reference", engine=engine_name):
+            ref_path = _prepare_reference(req, engine_name)
 
         warning: str | None = _remap_warning(requested_engine, engine_name, req.language)
         job_id = uuid.uuid4().hex
@@ -468,7 +477,8 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
             availability_error = RuntimeError(f"{engine_name} is not configured")
         if availability_error is None:
             try:
-                engine = manager.get(engine_name)
+                with timed("tts.engine_get", engine=engine_name, phase="primary"):
+                    engine = manager.get(engine_name)
             except Exception as e:
                 availability_error = e
 
@@ -479,7 +489,8 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                 ) from availability_error
             fallback_name = _fallback_engine(req.language)
             try:
-                engine = manager.get(fallback_name)
+                with timed("tts.engine_get", engine=fallback_name, phase="fallback"):
+                    engine = manager.get(fallback_name)
             except Exception as fallback_error:
                 raise HTTPException(
                     status_code=503,
@@ -498,12 +509,16 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         cache_key = _make_cache_key(engine_name, req, text)
         cached_hit = _lookup_cached_result(cache_key, skip_cache=req.skip_cache)
         if cached_hit is not None:
+            cache_hit = True
+            effective_engine = engine_name
             return cached_hit
 
+        effective_engine = engine_name
         try:
-            produced = _run_synthesis(
-                engine, engine_name, text, req.language, ref_path, raw_out, job_id, speaking_rate=req.speaking_rate, cancel_event=cancel_event
-            )
+            with timed("tts.synthesize", engine=engine_name, language=req.language, chars=len(text)):
+                produced = _run_synthesis(
+                    engine, engine_name, text, req.language, ref_path, raw_out, job_id, speaking_rate=req.speaking_rate, cancel_event=cancel_event
+                )
             engine_warning = getattr(engine, "last_warning", None)
             if engine_warning:
                 warning = _join_warnings(warning, engine_warning)
@@ -515,9 +530,10 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                     "ElevenLabs voice cloning is not available on your current plan. "
                     "Generated with the preset ElevenLabs voice instead.",
                 )
-                produced = _run_synthesis(
-                    engine, "elevenlabs", text, req.language, None, raw_out, job_id, speaking_rate=req.speaking_rate, cancel_event=cancel_event
-                )
+                with timed("tts.synthesize", engine="elevenlabs", language=req.language, chars=len(text), phase="ivc-fallback"):
+                    produced = _run_synthesis(
+                        engine, "elevenlabs", text, req.language, None, raw_out, job_id, speaking_rate=req.speaking_rate, cancel_event=cancel_event
+                    )
             else:
                 raise HTTPException(status_code=500, detail=f"Synthesis failed: {e}")
         except MsingiReferenceRequiredError as e:
@@ -527,7 +543,8 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
             # Required smart quota fallback: cloud -> local engine for this language.
             fallback_name = _fallback_engine(req.language)
             try:
-                fallback_engine = manager.get(fallback_name)
+                with timed("tts.engine_get", engine=fallback_name, phase="quota-fallback"):
+                    fallback_engine = manager.get(fallback_name)
             except Exception as fallback_error:
                 raise HTTPException(
                     status_code=503,
@@ -552,17 +569,18 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
             # Re-run with fallback (new output path)
             raw_out_fb = str(TEMP_AUDIO_DIR / f"out_{job_id}_fb.wav")
             try:
-                produced = _run_synthesis(
-                    fallback_engine,
-                    fallback_name,
-                    text,
-                    req.language,
-                    None,
-                    raw_out_fb,
-                    job_id + "_fb",
-                    speaking_rate=req.speaking_rate,
-                    cancel_event=cancel_event,
-                )
+                with timed("tts.synthesize", engine=fallback_name, language=req.language, chars=len(text), phase="quota-fallback"):
+                    produced = _run_synthesis(
+                        fallback_engine,
+                        fallback_name,
+                        text,
+                        req.language,
+                        None,
+                        raw_out_fb,
+                        job_id + "_fb",
+                        speaking_rate=req.speaking_rate,
+                        cancel_event=cancel_event,
+                    )
                 raw_out = raw_out_fb
             except Exception as fallback_error:
                 raise HTTPException(
@@ -572,33 +590,36 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
             # Optional resilience: transient cloud errors are not silently falling back except quota.
             raise HTTPException(status_code=500, detail=f"Synthesis failed: {e}") from e
 
-        if produced.endswith(".mp3"):
-            # Already delivered as mp3 (e.g. cloud engine or crossfaded chunks) — skip re-encode.
-            mp3_out = produced
-        elif _ffmpeg_available():
-            candidate = str(TEMP_AUDIO_DIR / f"out_{job_id}.mp3")
-            try:
-                mp3_out = to_mp3(produced, candidate)
-            except Exception as e:
-                logger.warning("MP3 encoding failed for %s: %s; keeping original container", produced, e)
-                warning = _join_warnings(warning, "MP3 encoding unavailable; delivered original WAV audio.")
+        with timed("tts.stage.encode", engine=engine_name):
+            if produced.endswith(".mp3"):
+                # Already delivered as mp3 (e.g. cloud engine or crossfaded chunks) — skip re-encode.
                 mp3_out = produced
-        else:
-            # No ffmpeg locally: keep original container (wav)
-            warning = _join_warnings(warning, "MP3 encoding unavailable; delivered WAV audio.")
-            mp3_out = produced
+            elif _ffmpeg_available():
+                candidate = str(TEMP_AUDIO_DIR / f"out_{job_id}.mp3")
+                try:
+                    mp3_out = to_mp3(produced, candidate)
+                except Exception as e:
+                    logger.warning("MP3 encoding failed for %s: %s; keeping original container", produced, e)
+                    warning = _join_warnings(warning, "MP3 encoding unavailable; delivered original WAV audio.")
+                    mp3_out = produced
+            else:
+                # No ffmpeg locally: keep original container (wav)
+                warning = _join_warnings(warning, "MP3 encoding unavailable; delivered WAV audio.")
+                mp3_out = produced
 
         _check_cancel(cancel_event)
         ext = "mp3" if mp3_out.endswith(".mp3") else "wav"
         r2_key = build_speech_r2_key(
             engine_name, req.language, req.topic or "Untitled", ext
         )
-        try:
-            url = upload_output(mp3_out, r2_key)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"R2 upload failed: {e}")
+        with timed("tts.stage.upload", engine=engine_name):
+            try:
+                url = upload_output(mp3_out, r2_key)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"R2 upload failed: {e}")
 
-        duration_seconds = get_duration(mp3_out)
+        with timed("tts.stage.timeline", engine=engine_name):
+            duration_seconds = get_duration(mp3_out)
 
         # Build speech timeline: prefer provider timestamps (ElevenLabs), else robust estimate.
         timeline = None
@@ -675,6 +696,17 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                     pp.unlink(missing_ok=True)
             except Exception:
                 pass
+        exc = sys.exc_info()[0]
+        record(
+            "tts.request_total",
+            (time.perf_counter() - started) * 1000,
+            engine=effective_engine,
+            requested_engine=requested_engine_name,
+            language=req.language,
+            cache_hit=cache_hit,
+            status="error" if exc else "ok",
+            error_type=exc.__name__ if exc else None,
+        )
         if acquired_here:
             _synthesize_lock.release()
 

@@ -168,6 +168,7 @@ export default function Home() {
             <Link
               key={t.href}
               href={t.href}
+              prefetch={false}
               className="group rounded-xl border bg-white p-5 shadow-sm transition hover:border-blue-300 hover:shadow-md"
             >
               <div className="flex items-start justify-between gap-3">

@@ -85,6 +85,7 @@ export default function Sidebar() {
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={false}
                   onClick={() => setOpen(false)}
                   className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 transition ${
                     active

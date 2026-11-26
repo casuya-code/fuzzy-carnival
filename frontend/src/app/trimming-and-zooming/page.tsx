@@ -30,7 +30,25 @@ import TransitionPicker, {
 
 } from "@/components/TransitionPicker";
 
-import { type Language, finalizeVideo, processVideo, processVideoBatch, VideoProcessResult } from "@/lib/api";
+import {
+
+  type Language,
+
+  finalizeVideo,
+
+  processVideo,
+
+  processVideoBatch,
+
+  submitVideoJob,
+
+  VideoProcessResult,
+
+  waitForVideoJob,
+
+} from "@/lib/api";
+
+import { mapWithConcurrency } from "@/lib/asyncPool";
 
 import { fmtSize } from "@/lib/format";
 
@@ -126,6 +144,10 @@ function TrimmingAndZoomingPageInner() {
 
   const [upscale2k, setUpscale2k] = useState(false);
 
+  const [quickPreview, setQuickPreview] = useState(false);
+
+  const [backgroundRender, setBackgroundRender] = useState(false);
+
   const [loudnorm, setLoudnorm] = useState(true);
 
   const [processing, setProcessing] = useState(false);
@@ -141,6 +163,10 @@ function TrimmingAndZoomingPageInner() {
   const clipInputRef = useRef<HTMLInputElement | null>(null);
 
   const audioInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Reuse unchanged batch intermediates when re-running the same export.
+
+  const batchKeyCache = useRef<Map<string, string>>(new Map());
 
   const searchParams = useSearchParams();
 
@@ -370,6 +396,28 @@ function TrimmingAndZoomingPageInner() {
 
 
 
+  const runRender = async <T,>(
+    kind: "process" | "batch" | "finalize",
+    payload: Record<string, unknown>,
+    sync: (p: any) => Promise<T>,
+  ): Promise<T> => {
+
+    if (!backgroundRender) return sync(payload as any);
+
+    const accepted = await submitVideoJob(kind, payload);
+
+    const done = await waitForVideoJob(accepted.job_id, {
+
+      onProgress: (s) => setProgress(`${s.stage} ${Math.round(s.progress)}%…`),
+
+    });
+
+    return done.result as T;
+
+  };
+
+
+
   const process = async () => {
 
     setError(null);
@@ -432,53 +480,109 @@ function TrimmingAndZoomingPageInner() {
 
       if (files.length > BATCH_SIZE && transitionSfx === "off" && !overlayFile) {
 
-        const batchKeys: string[] = [];
-
         const totalBatches = Math.ceil(files.length / BATCH_SIZE);
 
-        for (let b = 0; b < totalBatches; b++) {
+        const batchPayloads = Array.from({ length: totalBatches }, (_, b) => {
 
           const start = b * BATCH_SIZE;
 
-          const batchFiles = files.slice(start, start + BATCH_SIZE);
+          return {
 
-          setProgress(`Processing clips ${start + 1}-${Math.min(start + batchFiles.length, files.length)} of ${files.length} (batch ${b + 1}/${totalBatches})…`);
+            start,
 
-          const batch = await processVideoBatch({
+            batchFiles: files.slice(start, start + BATCH_SIZE),
 
-            clips: batchFiles,
+            payload: {
 
-            aspect_ratio: aspectRatio,
+              clips: files.slice(start, start + BATCH_SIZE),
 
-            trim_end_sec: trimEndSec,
+              aspect_ratio: aspectRatio,
 
-            topic,
+              trim_end_sec: trimEndSec,
+
+              topic,
+
+              language,
+
+              // Forward the selected audio so batch jobs get beat-synced zoom too.
+
+              // No bpm is computed on this page — the backend derives it from the audio.
+
+              audio: audioPayload.file,
+
+              audio_r2_key: audioPayload.key,
+
+              transition: defaultTransition,
+
+              transition_duration_sec: transitionDuration,
+
+              transitions: effectiveGaps.slice(start, start + Math.min(BATCH_SIZE, files.length - start) - 1),
+
+              overlay: overlayEffect,
+
+              preview: quickPreview,
+
+            },
+
+          };
+
+        });
+
+        // Two independent batch requests at a time; results are written back by index.
+
+        const batchKeys = await mapWithConcurrency(batchPayloads, 2, async ({ start, batchFiles, payload }, b) => {
+
+          const audioIdentity = audioPayload.file
+
+            ? `${audioPayload.file.name}:${audioPayload.file.size}:${audioPayload.file.lastModified}`
+
+            : audioPayload.key;
+
+          const signature = JSON.stringify({
+
+            clips: batchFiles.map((f) => [f.name, f.size, f.lastModified]),
+
+            start,
+
+            aspectRatio,
+
+            trimEndSec,
+
+            overlayEffect,
 
             language,
 
-            // Forward the selected audio so batch jobs get beat-synced zoom too.
+            topic,
 
-            // No bpm is computed on this page — the backend derives it from the audio.
+            audioIdentity,
 
-            audio: audioPayload.file,
+            gaps: payload.transitions,
 
-            audio_r2_key: audioPayload.key,
-
-            transition: defaultTransition,
-
-            transition_duration_sec: transitionDuration,
-
-            transitions: effectiveGaps.slice(start, start + batchFiles.length - 1),
-
-            overlay: overlayEffect,
+            quickPreview,
 
           });
 
+          const cached = batchKeyCache.current.get(signature);
+
+          if (cached) {
+
+            setProgress(`Reusing exported batch ${b + 1}/${totalBatches}…`);
+
+            return cached;
+
+          }
+
+          setProgress(`Processing clips ${start + 1}-${Math.min(start + batchFiles.length, files.length)} of ${files.length} (batch ${b + 1}/${totalBatches})…`);
+
+          const batch = await runRender("batch", payload, processVideoBatch);
+
           if (!batch.video_r2_key) throw new Error("Batch processing did not return a video key.");
 
-          batchKeys.push(batch.video_r2_key);
+          batchKeyCache.current.set(signature, batch.video_r2_key);
 
-        }
+          return batch.video_r2_key;
+
+        });
 
         const boundaryGaps = Array.from({ length: Math.max(0, batchKeys.length - 1) }, (_, i) =>
 
@@ -488,7 +592,7 @@ function TrimmingAndZoomingPageInner() {
 
         setProgress(`Finalizing video (${batchKeys.length} batches) with audio…`);
 
-        data = await finalizeVideo({
+        data = await runRender("finalize", {
 
           video_r2_keys: batchKeys,
 
@@ -528,13 +632,15 @@ function TrimmingAndZoomingPageInner() {
 
           font_path: loadBrandFont()?.font_path,
 
-        });
+          preview: quickPreview,
+
+        }, finalizeVideo);
 
       } else {
 
         setProgress("Processing clips and attaching audio…");
 
-        data = await processVideo({
+        data = await runRender("process", {
 
           clips: files,
 
@@ -576,7 +682,9 @@ function TrimmingAndZoomingPageInner() {
 
           font_path: loadBrandFont()?.font_path,
 
-        });
+          preview: quickPreview,
+
+        }, processVideo);
 
       }
 
@@ -1281,6 +1389,30 @@ function TrimmingAndZoomingPageInner() {
               <span>
 
                 <span className="font-medium">YouTube 2K upscale <InfoTip text="Export at higher resolution (e.g. 2560×1440 for 16:9) for sharper YouTube delivery. Slower to render." label="Upscaling" focusable={false} /></span>
+
+              </span>
+
+            </label>
+
+            <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+
+              <input type="checkbox" checked={quickPreview} onChange={(e) => setQuickPreview(e.target.checked)} className="mt-0.5" />
+
+              <span>
+
+                <span className="font-medium">Quick low-resolution preview <InfoTip text="Renders a fast 480px-wide draft with every effect still applied. Turn it off for the full-quality final export." label="Quick preview" focusable={false} /></span>
+
+              </span>
+
+            </label>
+
+            <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+
+              <input type="checkbox" checked={backgroundRender} onChange={(e) => setBackgroundRender(e.target.checked)} className="mt-0.5" />
+
+              <span>
+
+                <span className="font-medium">Render in background <InfoTip text="Queue the render as a job with live progress and cancellation instead of blocking this page." label="Background render" focusable={false} /></span>
 
               </span>
 
