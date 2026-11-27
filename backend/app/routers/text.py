@@ -4,6 +4,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config import ENGINE_NAMES
 from app.services.model_manager import CLOUD_ENGINES
+from app.services.stage_directions import parse_stage_directions
 from app.services.text_normalizer import normalize_text
 from app.auth import require_user as require_api_key
 from app.rate_limit import rate_limit
@@ -23,7 +24,12 @@ class WarmRequest(BaseModel):
 @router.post("/normalize")
 def normalize(req: NormalizeRequest):
     lang = req.language if req.language in ("en", "sw") else "en"
-    return {"normalized": normalize_text(req.text, lang)}
+    # Show exactly what will be spoken: stage directions are performed, not read.
+    stage = parse_stage_directions(req.text)
+    spoken = " ".join(
+        part for seg in stage.segments if (part := normalize_text(seg, lang).strip())
+    )
+    return {"normalized": spoken}
 
 
 def _warm_engine_locked(engine: str) -> bool:

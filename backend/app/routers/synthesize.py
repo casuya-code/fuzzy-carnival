@@ -48,6 +48,11 @@ from app.services.r2_storage import (
     public_url,
     upload_output,
 )
+from app.services.stage_directions import (
+    DEFAULT_PAUSE_MS,
+    parse_stage_directions,
+    suggested_rate,
+)
 from app.services.text_normalizer import normalize_text
 from app.services.timeline_service import estimate_timeline
 from app.auth import require_user as require_api_key
@@ -208,15 +213,24 @@ def _run_ffmpeg_cancellable(cmd: list[str], cancel_event: threading.Event | None
 
 
 def _stitch_crossfade_cancellable(
-    chunks: list[str], out_path: str, pause_ms: int, cancel_event: threading.Event | None
+    chunks: list[str],
+    out_path: str,
+    pause_ms: int,
+    cancel_event: threading.Event | None,
+    gaps_ms: list[int] | None = None,
 ) -> str:
-    """FFmpeg acrossfade stitching (same filter as audio_processor) with cancel support."""
+    """FFmpeg acrossfade stitching (same filter as audio_processor) with cancel support.
+
+    ``gaps_ms`` gives an explicit silence duration per boundary (stage
+    directions like ``[pause]``); it falls back to ``pause_ms`` otherwise.
+    """
     inputs: list[str] = []
     filters: list[str] = []
     for idx, chunk in enumerate(chunks):
         inputs.extend(["-i", chunk])
         if idx < len(chunks) - 1:
-            filters.append(f"[{idx}:a]aresample=24000,apad=pad_dur={pause_ms / 1000.0}[a{idx}];")
+            gap = gaps_ms[idx] if gaps_ms and idx < len(gaps_ms) else pause_ms
+            filters.append(f"[{idx}:a]aresample=24000,apad=pad_dur={gap / 1000.0}[a{idx}];")
         else:
             filters.append(f"[{idx}:a]aresample=24000[a{idx}];")
     prev = "a0"
@@ -451,7 +465,12 @@ def _load_fallback(
     return None, None, errors
 
 
-def _make_cache_key(engine_name: str, req: SynthesizeRequest, text: str) -> tuple:
+def _make_cache_key(
+    engine_name: str,
+    req: SynthesizeRequest,
+    text: str,
+    stage: tuple[tuple[int, ...], float | None] | None = None,
+) -> tuple:
     """Cache identity must include every setting that changes the delivered take."""
     denoise = req.denoise_ref if req.denoise_ref is not None else DENOISE_REFERENCE
     return (
@@ -462,6 +481,7 @@ def _make_cache_key(engine_name: str, req: SynthesizeRequest, text: str) -> tupl
         req.speaking_rate or 1.0,
         denoise,
         req.topic or "Untitled",
+        stage or ((), None),
     )
 
 
@@ -536,7 +556,7 @@ def _prepare_reference(req: SynthesizeRequest, engine_name: str):
         raise HTTPException(status_code=400, detail=f"Reference audio error: {e}")
 
 
-def _run_synthesis(
+def _synthesize_single(
     engine,
     engine_name: str,
     text: str,
@@ -569,6 +589,51 @@ def _run_synthesis(
     )
 
 
+def _run_synthesis(
+    engine,
+    engine_name: str,
+    text: str,
+    language: str,
+    ref_path,
+    raw_out: str,
+    job_id: str,
+    speaking_rate: float | None = None,
+    cancel_event: threading.Event | None = None,
+    segments: tuple[str, ...] | None = None,
+    gaps_ms: tuple[int, ...] | None = None,
+) -> str:
+    """Synthesize one take, honouring stage-direction pauses between segments."""
+    _check_cancel(cancel_event)
+    if not segments or len(segments) <= 1:
+        return _synthesize_single(
+            engine, engine_name, text, language, ref_path, raw_out, job_id,
+            speaking_rate, cancel_event,
+        )
+    if not _ffmpeg_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Speech with stage-direction pauses requires ffmpeg for stitching",
+        )
+    final_path = str(Path(raw_out).with_suffix(".mp3"))
+    tmp_files: list[str] = []
+    try:
+        for idx, segment in enumerate(segments):
+            _check_cancel(cancel_event)
+            tmp = str(TEMP_AUDIO_DIR / f"stage_{job_id}_{idx}.wav")
+            produced = _synthesize_single(
+                engine, engine_name, segment, language, ref_path, tmp,
+                f"{job_id}_{idx}", speaking_rate, cancel_event,
+            )
+            tmp_files.append(produced)
+        _check_cancel(cancel_event)
+        return _stitch_crossfade_cancellable(
+            tmp_files, final_path, DEFAULT_PAUSE_MS, cancel_event, gaps_ms=list(gaps_ms or ())
+        )
+    finally:
+        for p in tmp_files:
+            Path(p).unlink(missing_ok=True)
+
+
 def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, cancel_event: threading.Event | None = None, lock_already_held: bool = False):
     started = time.perf_counter()
     requested_engine_name = req.engine
@@ -593,10 +658,31 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         _check_cancel(cancel_event)
         manager = get_manager()
 
-        # Normalize text
-        text = normalize_text(req.text, req.language)
-        if not text.strip():
+        # Interpret inline stage directions: [tone] notes and <emphasis> tags
+        # are performed (never spoken), while [pause] becomes real silence.
+        stage = parse_stage_directions(req.text)
+        raw_segments = tuple(normalize_text(seg, req.language) for seg in stage.segments)
+        segments = tuple(seg for seg in raw_segments if seg.strip())
+        if not segments:
             raise HTTPException(status_code=400, detail="Text is empty after normalization")
+        gaps_ms = stage.gaps_ms
+        if len(segments) != len(raw_segments):
+            # A segment vanished during normalization: realign its boundaries.
+            # stage.gaps_ms[i] is the silence *before* segment i + 1, so the
+            # boundary leading into each kept segment is at next_index - 1.
+            kept = [i for i, seg in enumerate(raw_segments) if seg.strip()]
+            gaps_ms = tuple(
+                stage.gaps_ms[next_i - 1]
+                if 0 <= next_i - 1 < len(stage.gaps_ms)
+                else DEFAULT_PAUSE_MS
+                for next_i in kept[1:]
+            )
+        text = " ".join(segments)
+        # Explicit caller pace always wins; otherwise tone words gently nudge it.
+        effective_rate = (
+            req.speaking_rate if req.speaking_rate is not None else suggested_rate(stage.tone)
+        )
+        stage_sig: tuple[tuple[int, ...], float | None] = (gaps_ms, effective_rate)
 
         # Resolve engine (validate against language)
         requested_engine = req.engine
@@ -605,7 +691,7 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         warning = _request_warnings(req, requested_engine, engine_name)
 
         # Cache lookup for identical requests (by effective engine and all take-affecting settings)
-        cache_key = _make_cache_key(engine_name, req, text)
+        cache_key = _make_cache_key(engine_name, req, text, stage_sig)
         cached_hit = _lookup_cached_result(cache_key, skip_cache=req.skip_cache)
         if cached_hit is not None:
             cache_hit = True
@@ -651,7 +737,7 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
             ref_path = None
 
         # If we fell back at availability time, update cache key context to effective engine
-        cache_key = _make_cache_key(engine_name, req, text)
+        cache_key = _make_cache_key(engine_name, req, text, stage_sig)
         cached_hit = _lookup_cached_result(cache_key, skip_cache=req.skip_cache)
         if cached_hit is not None:
             cache_hit = True
@@ -664,7 +750,9 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         try:
             with timed("tts.synthesize", engine=engine_name, language=req.language, chars=len(text)):
                 produced = _run_synthesis(
-                    engine, engine_name, text, req.language, ref_path, raw_out, job_id, speaking_rate=req.speaking_rate, cancel_event=cancel_event
+                    engine, engine_name, text, req.language, ref_path, raw_out, job_id,
+                    speaking_rate=effective_rate, cancel_event=cancel_event,
+                    segments=segments, gaps_ms=gaps_ms,
                 )
             engine_warning = getattr(engine, "last_warning", None)
             if engine_warning:
@@ -679,7 +767,9 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                 )
                 with timed("tts.synthesize", engine="elevenlabs", language=req.language, chars=len(text), phase="ivc-fallback"):
                     produced = _run_synthesis(
-                        engine, "elevenlabs", text, req.language, None, raw_out, job_id, speaking_rate=req.speaking_rate, cancel_event=cancel_event
+                        engine, "elevenlabs", text, req.language, None, raw_out, job_id,
+                        speaking_rate=effective_rate, cancel_event=cancel_event,
+                        segments=segments, gaps_ms=gaps_ms,
                     )
             else:
                 raise HTTPException(status_code=500, detail=f"Synthesis failed: {e}")
@@ -709,7 +799,7 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                 _request_warnings(req, requested_engine, engine_name), fallback_warning
             )
             ref_path = None
-            cache_key = _make_cache_key(engine_name, req, text)
+            cache_key = _make_cache_key(engine_name, req, text, stage_sig)
             cached_hit = _lookup_cached_result(cache_key, skip_cache=req.skip_cache)
             if cached_hit is not None:
                 cache_hit = True
@@ -729,8 +819,10 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                         None,
                         raw_out_fb,
                         job_id + "_fb",
-                        speaking_rate=req.speaking_rate,
+                        speaking_rate=effective_rate,
                         cancel_event=cancel_event,
+                        segments=segments,
+                        gaps_ms=gaps_ms,
                     )
                 raw_out = raw_out_fb
             except Exception as fallback_error:
@@ -821,7 +913,7 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
             fallback_warning, _request_warnings(req, requested_engine, engine_name)
         )
         cache_store = result.model_copy(update={"warning": stored_warning})
-        cache_key_store = _make_cache_key(engine_name, req, text)
+        cache_key_store = _make_cache_key(engine_name, req, text, stage_sig)
         with _cache_lock:
             _result_cache[cache_key_store] = cache_store
             while len(_result_cache) > _CACHE_MAX:

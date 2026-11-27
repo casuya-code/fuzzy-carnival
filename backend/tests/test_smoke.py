@@ -89,6 +89,21 @@ def test_blank_text_rejected(auth_headers):
     assert r.status_code in (200, 400, 422)
 
 
+def test_normalize_preview_performs_stage_directions(auth_headers):
+    r = client.post(
+        "/api/v1/normalize",
+        json={
+            "text": "[serious, cautionary tone] Roads bring <emphasis>danger</emphasis>. [pause] But trees offer shelter.",
+            "language": "en",
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    spoken = r.json()["normalized"]
+    assert spoken == "Roads bring danger. But trees offer shelter."
+    assert "[" not in spoken and "<" not in spoken and "tone" not in spoken
+
+
 def test_synthesize_rejects_blank_text(auth_headers):
     r = client.post(
         "/api/v1/synthesize",
