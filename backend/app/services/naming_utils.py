@@ -12,6 +12,7 @@ ENGINE_CODES = {
     "mms": "MMS",
     "azure": "AZR",
     "elevenlabs": "ELV",
+    "cartesia": "CRT",
 }
 
 LANG_CODES = {

@@ -13,6 +13,7 @@ from app.observability import record, timed
 from app.config import (
     ENABLE_AFRISPEECH,
     ENABLE_AZURE,
+    ENABLE_CARTESIA,
     ENABLE_ELEVENLABS,
     ENABLE_KYUTAI,
     ENABLE_MMS,
@@ -25,12 +26,13 @@ from app.config import (
 from app.engines.afrispeech_pocket import AfriSpeechPocketEngine
 from app.engines.azure_swahili import AzureSwahiliEngine
 from app.engines.base import BaseTTSEngine
+from app.engines.cartesia import CartesiaEngine
 from app.engines.elevenlabs import ElevenLabsEngine
 from app.engines.kyutai_pocket import KyutaiPocketEngine
 from app.engines.mms_swahili_fallback import MmsSwahiliFallbackEngine
 from app.engines.msingi_sauti import MsingiSautiEngine
 
-CLOUD_ENGINES = {"azure", "elevenlabs"}
+CLOUD_ENGINES = {"azure", "elevenlabs", "cartesia"}
 
 
 class ModelManager:
@@ -42,6 +44,7 @@ class ModelManager:
             "mms": (MmsSwahiliFallbackEngine, ENABLE_MMS),
             "azure": (AzureSwahiliEngine, ENABLE_AZURE),
             "elevenlabs": (ElevenLabsEngine, ENABLE_ELEVENLABS),
+            "cartesia": (CartesiaEngine, ENABLE_CARTESIA),
         }
         self.engines: dict[str, BaseTTSEngine] = {
             name: factory() for name, (factory, enabled) in factories.items() if enabled

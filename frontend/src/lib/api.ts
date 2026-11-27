@@ -206,7 +206,7 @@ export async function confirmPasswordReset(token: string, newPassword: string): 
   if (!res.ok) throw new Error(extractDetail(await res.text()) || `Reset failed (${res.status})`);
 }
 
-export type Engine = "kyutai" | "afrispeech" | "msingi" | "mms" | "azure" | "elevenlabs";
+export type Engine = "kyutai" | "afrispeech" | "msingi" | "mms" | "azure" | "elevenlabs" | "cartesia";
 export type Language = "en" | "sw";
 
 /** Shared UI labels and engine availability — keep all engine pickers in sync. */
@@ -217,11 +217,12 @@ export const ENGINE_LABEL: Record<Engine, string> = {
   mms: "Swahili (Basic Voice)",
   azure: "Swahili Natural Voice",
   elevenlabs: "Expressive Voice (Online)",
+  cartesia: "Cartesia Voice (Online)",
 };
 
 export const ENGINES_BY_LANGUAGE: Record<Language, Engine[]> = {
-  en: ["kyutai", "afrispeech", "elevenlabs"],
-  sw: ["azure", "msingi", "mms", "elevenlabs"],
+  en: ["kyutai", "afrispeech", "elevenlabs", "cartesia"],
+  sw: ["azure", "msingi", "mms", "elevenlabs", "cartesia"],
 };
 
 export const DEFAULT_ENGINE: Record<Language, Engine> = {

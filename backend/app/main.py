@@ -13,6 +13,7 @@ from app.config import (
     ELEVENLABS_ENABLE_CLONING,
     ENABLE_AFRISPEECH,
     ENABLE_AZURE,
+    ENABLE_CARTESIA,
     ENABLE_ELEVENLABS,
     ENABLE_KYUTAI,
     ENABLE_MMS,
@@ -49,6 +50,7 @@ _ENGINE_FLAGS = {
     "mms": ENABLE_MMS,
     "azure": ENABLE_AZURE,
     "elevenlabs": ENABLE_ELEVENLABS,
+    "cartesia": ENABLE_CARTESIA,
 }
 
 

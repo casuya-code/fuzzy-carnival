@@ -203,6 +203,7 @@ ENABLE_MSINGI = _env_bool("ENABLE_MSINGI", True)
 ENABLE_MMS = _env_bool("ENABLE_MMS", True)
 ENABLE_AZURE = _env_bool("ENABLE_AZURE", True)
 ENABLE_ELEVENLABS = _env_bool("ENABLE_ELEVENLABS", True)
+ENABLE_CARTESIA = _env_bool("ENABLE_CARTESIA", True)
 KYUTAI_WARM = _env_bool("KYUTAI_WARM", True)
 WARM_MMS = _env_bool("WARM_MMS", True)
 
@@ -220,7 +221,7 @@ MSINGI_LANGUAGE = os.getenv("MSINGI_LANGUAGE", "auto").strip().lower()
 SWAHILI_LOANWORDS_PATH = os.getenv("SWAHILI_LOANWORDS_PATH", "").strip()
 PREFETCH_STRICT = _env_bool("PREFETCH_STRICT", False)
 
-ENGINE_NAMES = ("kyutai", "afrispeech", "msingi", "mms", "azure", "elevenlabs")
+ENGINE_NAMES = ("kyutai", "afrispeech", "msingi", "mms", "azure", "elevenlabs", "cartesia")
 
 # --- Cloud TTS (Azure Speech / ElevenLabs) ---------------------------------------
 AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
@@ -229,6 +230,9 @@ AZURE_SWAHILI_VOICE = os.getenv("AZURE_SWAHILI_VOICE", "sw-TZ-DaudiNeural")
 AZURE_ENGLISH_VOICE = os.getenv("AZURE_ENGLISH_VOICE", "en-US-AriaNeural")
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "").strip()
+CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "").strip()
+CARTESIA_MODEL_ID = os.getenv("CARTESIA_MODEL_ID", "sonic-latest").strip() or "sonic-latest"
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 ELEVENLABS_DEFAULT_VOICE_ID = os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "nPczCjzI2devNBz1zQrb")
 ELEVENLABS_ENABLE_CLONING = _env_bool("ELEVENLABS_ENABLE_CLONING", False)

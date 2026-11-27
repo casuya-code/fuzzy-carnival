@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config import (
     AZURE_SPEECH_KEY,
+    CARTESIA_API_KEY,
     DENOISE_REFERENCE,
     ELEVENLABS_API_KEY,
     ELEVENLABS_ENABLE_CLONING,
@@ -24,6 +25,7 @@ from app.config import (
     TEMP_AUDIO_DIR,
 )
 from app.engines.azure_swahili import AzureQuotaExceededError
+from app.engines.cartesia import CartesiaQuotaExceededError
 from app.engines.elevenlabs import (
     ElevenLabsCloningUnavailableError,
     ElevenLabsQuotaExceededError,
@@ -409,6 +411,8 @@ def _cloud_configured(engine_name: str) -> bool:
         return bool(AZURE_SPEECH_KEY)
     if engine_name == "elevenlabs":
         return bool(ELEVENLABS_API_KEY)
+    if engine_name == "cartesia":
+        return bool(CARTESIA_API_KEY)
     return True
 
 
@@ -571,6 +575,12 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
     cache_hit = False
     effective_engine = req.engine
     acquired_here = False
+    # Defaults so the finally-block cleanup never trips on an unbound name
+    # when an exception occurs before these are assigned below.
+    raw_out = None
+    raw_out_fb = None
+    mp3_out = None
+    produced = None
     if not lock_already_held:
         if not _synthesize_lock.acquire(blocking=False):
             raise HTTPException(
@@ -676,7 +686,7 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         except MsingiReferenceRequiredError as e:
             # Missing user input, not a server fault.
             raise HTTPException(status_code=400, detail=str(e)) from e
-        except (AzureQuotaExceededError, ElevenLabsQuotaExceededError) as e:
+        except (AzureQuotaExceededError, ElevenLabsQuotaExceededError, CartesiaQuotaExceededError) as e:
             # Required smart quota fallback: cloud -> local engine for this language.
             fallback_name, fallback_engine, errors = _load_fallback(
                 req.language, manager, exclude=engine_name
@@ -689,6 +699,8 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
             reason = (
                 "Azure quota exceeded (HTTP 429)"
                 if isinstance(e, AzureQuotaExceededError)
+                else "Cartesia quota/rate limit reached"
+                if isinstance(e, CartesiaQuotaExceededError)
                 else "ElevenLabs quota/rate limit reached"
             )
             fallback_warning = f"{reason}. Fell back to '{fallback_name}' for this request."

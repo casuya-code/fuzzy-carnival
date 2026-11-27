@@ -2,7 +2,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-EngineType = Literal["kyutai", "afrispeech", "msingi", "mms", "azure", "elevenlabs"]
+EngineType = Literal["kyutai", "afrispeech", "msingi", "mms", "azure", "elevenlabs", "cartesia"]
 LanguageType = Literal["en", "sw"]
 
 
