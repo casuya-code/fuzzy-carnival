@@ -274,7 +274,7 @@ export default function TextToSpeechForm({
           className={`w-full rounded-lg border p-3 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200 ${overLimit ? "border-red-400" : "border-gray-300"}`}
         />
         <div className="flex items-center justify-between text-xs text-gray-500">
-          <span>Ctrl+Enter to create <InfoTip text="Use punctuation for natural pauses. You can also add [pause] for a longer beat, [calm, reflective tone] for delivery, and <emphasis>word</emphasis> to stress a word — these directions are performed, not read aloud." label="Create shortcut" /></span>
+          <span>Ctrl+Enter to create <InfoTip text="Use punctuation for natural pauses. You can also add [pause] / (break) for a longer beat, [calm, reflective tone] for delivery, <emphasis>word</emphasis> to stress a word, or scoped tags like <whisper>…</whisper> and <slow>…</slow> — these directions are performed, not read aloud." label="Create shortcut" /></span>
           <span className={overLimit ? "text-red-600 font-semibold" : ""}>{text.length} / {MAX_CHARS}</span>
         </div>
       </div>

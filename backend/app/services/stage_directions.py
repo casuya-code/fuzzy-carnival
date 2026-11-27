@@ -8,8 +8,14 @@ Supported markup (all of it is *performed*, never read out loud):
   ``[serious, cautionary tone]``, ``[reflective, measured tone]`` ...) is a
   performance hint. It is stripped from the speech and, when recognised,
   nudges the speaking pace slightly.
-* ``<emphasis>...</emphasis>`` / ``<em>...</emphasis>`` -> the tags are
-  stripped and the words are spoken normally.
+* Scoped performance tags (Fish Audio style): ``<emphasis>...</emphasis>``,
+  ``<whisper>...</whisper>``, ``<soft>...</soft>``, ``<fast>...</fast>``,
+  ``<slow>...</slow>``, ``<stress>...</stress>``, ``<forceful>...</forceful>``.
+  Tags are stripped; the wrapped words are spoken with the requested delivery.
+* Fish Audio style inline tokens: ``[angry]``, ``[whispering]``, ``[excited]``,
+  ``[laughing]``, and the parenthesised S1 forms ``(break)``, ``(long-break)``,
+  ``(breath)``, ``(soft tone)``, ``(in a hurry tone)`` etc. are all performed,
+  never read out loud.
 
 The parser degrades gracefully: malformed or unknown markup is simply dropped
 from the spoken text rather than being pronounced as words like "bracket".
@@ -25,22 +31,43 @@ LONG_PAUSE_MS = 1200
 SHORT_PAUSE_MS = 350
 MAX_PAUSE_MS = 5000
 
-# Anything in square brackets, or an emphasis-style HTML tag.
-_DIRECTIVE_RE = re.compile(
-    r"\[[^\[\]]*\]|<\s*/?\s*(?:emphasis|em|strong|b)\s*>", re.IGNORECASE
+# Scoped performance tags used by Fish Audio and similar editors.
+_SCOPED_TAGS = (
+    "whisper", "emphasis", "em", "strong", "b",
+    "soft", "fast", "slow", "stress", "forceful",
 )
-_OPEN_TAG_RE = re.compile(r"<\s*(?:emphasis|em|strong|b)\s*>", re.IGNORECASE)
+# Parenthesised tokens are only treated as markup when they are one of these
+# known performance/effect tokens, so ordinary "(hello)" stays spoken.
+_PAREN_TOKENS = (
+    "break", "long-break", "long break", "breath",
+    "pause", "long pause", "short pause", "beat",
+    "laughing", "chuckling", "sighing", "soft tone", "whispering",
+    "in a hurry tone", "shouting", "excited",
+)
+
+_DIRECTIVE_RE = re.compile(
+    r"\[[^\[\]]*\]"
+    r"|<\s*/?\s*(?:" + "|".join(_SCOPED_TAGS) + r")\s*>"
+    r"|\(\s*(?:" + "|".join(_PAREN_TOKENS) + r")\s*\)",
+    re.IGNORECASE,
+)
+_OPEN_TAG_RE = re.compile(
+    r"<\s*(?P<tag>" + "|".join(_SCOPED_TAGS) + r")\s*>", re.IGNORECASE
+)
 _PAUSE_VALUE_RE = re.compile(
-    r"pause\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(ms|s|sec|secs|second|seconds)?", re.IGNORECASE
+    r"(?:pause|break)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(ms|s|sec|secs|second|seconds)?",
+    re.IGNORECASE,
 )
 
 _SLOW_WORDS = frozenset({
     "measured", "reflective", "calm", "serious", "cautionary", "solemn",
     "somber", "slow", "deliberate", "thoughtful", "gentle", "quiet",
+    "whisper", "whispering", "soft", "reluctant", "sad", "sympathetic",
 })
 _FAST_WORDS = frozenset({
     "excited", "urgent", "energetic", "brisk", "lively", "hopeful",
-    "warm", "inquisitive", "enthusiastic", "bright",
+    "warm", "inquisitive", "enthusiastic", "bright", "fast", "hurry",
+    "hurried", "shouting", "stress", "forceful",
 })
 
 
@@ -65,11 +92,11 @@ def _pause_ms(content: str) -> int | None:
     value = content.strip().lower()
     if not value:
         return None
-    if value in {"pause", "beat", "silence", "hold", "breath"}:
+    if value in {"pause", "beat", "silence", "hold", "breath", "break", "longbreak"}:
         return DEFAULT_PAUSE_MS
-    if value in {"short pause", "brief pause", "micro pause", "short beat"}:
+    if value in {"short pause", "brief pause", "micro pause", "short beat", "short break"}:
         return SHORT_PAUSE_MS
-    if value in {"long pause", "long beat", "dramatic pause"}:
+    if value in {"long pause", "long beat", "dramatic pause", "long-break", "long break"}:
         return LONG_PAUSE_MS
     match = _PAUSE_VALUE_RE.fullmatch(value)
     if match:
@@ -126,7 +153,9 @@ def parse_stage_directions(text: str) -> StageScript:
         token = match.group(0)
         following = raw[cursor : cursor + 1]
 
-        if token.startswith("["):
+        if token.startswith(("[", "(")):
+            # Square brackets (Fish S2) and parentheses (Fish S1) both carry
+            # inline performance notes; pauses create a real audio boundary.
             content = token[1:-1]
             gap = _pause_ms(content)
             if gap is not None:
@@ -139,10 +168,12 @@ def parse_stage_directions(text: str) -> StageScript:
                 buffer.append(joiner(following))
             continue
 
-        # HTML-ish emphasis tag: keep the words, drop the markup.
+        # Scoped performance tag: keep the words, drop the markup, and remember
+        # the requested delivery (e.g. whisper / slow / fast).
         emphasis_count += 1
-        if _OPEN_TAG_RE.fullmatch(token):
-            tones.append("emphasis")
+        open_tag = _OPEN_TAG_RE.fullmatch(token)
+        if open_tag:
+            tones.append(open_tag.group("tag").lower())
         buffer.append(joiner(following))
 
     buffer.append(raw[cursor:])

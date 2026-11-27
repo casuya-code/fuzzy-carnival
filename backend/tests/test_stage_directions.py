@@ -88,6 +88,36 @@ def test_pause_timing_is_part_of_cache_identity():
     assert paused != paced
 
 
+def test_fish_style_scoped_tags_are_performed_not_spoken():
+    quiet = parse_stage_directions("<whisper>Keep this quiet.</whisper>")
+    assert quiet.spoken == "Keep this quiet."
+    assert "<" not in quiet.spoken and "whisper" not in quiet.spoken
+    assert suggested_rate(quiet.tone) == 0.96
+
+    quick = parse_stage_directions("<fast>Say this faster.</fast>")
+    assert quick.spoken == "Say this faster."
+    assert suggested_rate(quick.tone) == 1.04
+
+    mixed = parse_stage_directions(
+        "<soft>Soft words.</soft> <forceful>Loud words.</forceful>"
+    )
+    assert mixed.spoken == "Soft words. Loud words."
+
+
+def test_fish_style_parenthesised_tokens():
+    script = parse_stage_directions("Hello. (break) Next part. (long-break) Final part.")
+    assert script.segments == ("Hello.", "Next part.", "Final part.")
+    assert script.gaps_ms == (DEFAULT_PAUSE_MS, LONG_PAUSE_MS)
+    assert "break" not in script.spoken
+
+    effects = parse_stage_directions("(laughing) Good morning. (whispering) It is a secret.")
+    assert effects.spoken == "Good morning. It is a secret."
+    assert "laughing" not in effects.spoken
+
+    # Ordinary parentheses are part of the sentence and stay spoken.
+    assert parse_stage_directions("Meet me (at noon).").spoken == "Meet me (at noon)."
+
+
 def test_run_synthesis_sends_segments_and_explicit_pause_gaps(monkeypatch, tmp_path):
     monkeypatch.setattr(synth, "_ffmpeg_available", lambda: True)
     routed: list[str] = []
