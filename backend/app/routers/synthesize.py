@@ -51,6 +51,7 @@ from app.services.r2_storage import (
 from app.services.stage_directions import (
     DEFAULT_PAUSE_MS,
     parse_stage_directions,
+    suggested_emotion,
     suggested_rate,
 )
 from app.services.text_normalizer import normalize_text
@@ -469,7 +470,7 @@ def _make_cache_key(
     engine_name: str,
     req: SynthesizeRequest,
     text: str,
-    stage: tuple[tuple[int, ...], float | None] | None = None,
+    stage: tuple | None = None,
 ) -> tuple:
     """Cache identity must include every setting that changes the delivered take."""
     denoise = req.denoise_ref if req.denoise_ref is not None else DENOISE_REFERENCE
@@ -566,6 +567,7 @@ def _synthesize_single(
     job_id: str,
     speaking_rate: float | None = None,
     cancel_event: threading.Event | None = None,
+    emotion: str | None = None,
 ) -> str:
     _check_cancel(cancel_event)
     # Azure/ElevenLabs: single cloud call (text already normalized; length <= 2000)
@@ -575,6 +577,12 @@ def _synthesize_single(
         )
     if engine_name == "elevenlabs":
         return engine.synthesize(text=text, reference_audio_path=ref_path, output_path=raw_out)
+    if engine_name == "cartesia":
+        # Cartesia / Sonic-3 turns these delivery hints into audible pace + emotion.
+        return engine.synthesize(
+            text=text, reference_audio_path=ref_path, output_path=raw_out,
+            speaking_rate=speaking_rate, emotion=emotion,
+        )
 
     if engine_name == "msingi" and len(text) > 400:
         return _synthesize_chunked(
@@ -601,13 +609,14 @@ def _run_synthesis(
     cancel_event: threading.Event | None = None,
     segments: tuple[str, ...] | None = None,
     gaps_ms: tuple[int, ...] | None = None,
+    emotion: str | None = None,
 ) -> str:
     """Synthesize one take, honouring stage-direction pauses between segments."""
     _check_cancel(cancel_event)
     if not segments or len(segments) <= 1:
         return _synthesize_single(
             engine, engine_name, text, language, ref_path, raw_out, job_id,
-            speaking_rate, cancel_event,
+            speaking_rate, cancel_event, emotion,
         )
     if not _ffmpeg_available():
         raise HTTPException(
@@ -622,7 +631,7 @@ def _run_synthesis(
             tmp = str(TEMP_AUDIO_DIR / f"stage_{job_id}_{idx}.wav")
             produced = _synthesize_single(
                 engine, engine_name, segment, language, ref_path, tmp,
-                f"{job_id}_{idx}", speaking_rate, cancel_event,
+                f"{job_id}_{idx}", speaking_rate, cancel_event, emotion,
             )
             tmp_files.append(produced)
         _check_cancel(cancel_event)
@@ -682,7 +691,10 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
         effective_rate = (
             req.speaking_rate if req.speaking_rate is not None else suggested_rate(stage.tone)
         )
-        stage_sig: tuple[tuple[int, ...], float | None] = (gaps_ms, effective_rate)
+        effective_emotion = suggested_emotion(stage.tone)
+        stage_sig: tuple[tuple[int, ...], float | None, str | None] = (
+            gaps_ms, effective_rate, effective_emotion
+        )
 
         # Resolve engine (validate against language)
         requested_engine = req.engine
@@ -752,7 +764,7 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                 produced = _run_synthesis(
                     engine, engine_name, text, req.language, ref_path, raw_out, job_id,
                     speaking_rate=effective_rate, cancel_event=cancel_event,
-                    segments=segments, gaps_ms=gaps_ms,
+                    segments=segments, gaps_ms=gaps_ms, emotion=effective_emotion,
                 )
             engine_warning = getattr(engine, "last_warning", None)
             if engine_warning:
@@ -823,6 +835,7 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
                         cancel_event=cancel_event,
                         segments=segments,
                         gaps_ms=gaps_ms,
+                        emotion=effective_emotion,
                     )
                 raw_out = raw_out_fb
             except Exception as fallback_error:

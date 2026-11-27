@@ -37,6 +37,7 @@ class CartesiaEngine(BaseTTSEngine):
         reference_audio_path=None,
         output_path=None,
         speaking_rate=None,
+        emotion=None,
     ) -> str:
         if not CARTESIA_API_KEY:
             raise RuntimeError(
@@ -64,6 +65,21 @@ class CartesiaEngine(BaseTTSEngine):
                 "sample_rate": 44100,
             },
         }
+        # Sonic-3 accepts a numeric speed (0.6-1.5) and an emotion. This is how
+        # inline directions such as [whisper] / <fast> become audible instead of
+        # merely being stripped from the transcript.
+        generation_config: dict[str, float | str] = {}
+        if speaking_rate is not None:
+            try:
+                speed = max(0.6, min(1.5, float(speaking_rate)))
+            except (TypeError, ValueError):
+                speed = None
+            if speed is not None and abs(speed - 1.0) > 0.001:
+                generation_config["speed"] = speed
+        if emotion:
+            generation_config["emotion"] = emotion
+        if generation_config:
+            payload["generation_config"] = generation_config
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=120)
         except requests.RequestException as e:

@@ -70,6 +70,27 @@ _FAST_WORDS = frozenset({
     "hurried", "shouting", "stress", "forceful",
 })
 
+# Ordered so the most specific delivery wins. Values are Cartesia Sonic-3
+# emotions; other engines simply ignore the hint.
+_EMOTION_HINTS: tuple[tuple[frozenset[str], str], ...] = (
+    (frozenset({"angry", "mad", "outraged", "furious"}), "angry"),
+    (frozenset({"anxious", "nervous", "panicked", "panic"}), "anxious"),
+    (frozenset({"sad", "sorrowful", "melancholic", "dejected", "grief"}), "sad"),
+    (frozenset({"laughing", "laugh", "chuckling", "joyful"}), "happy"),
+    (frozenset({"euphoric", "excited", "enthusiastic", "energetic"}), "excited"),
+    (frozenset({"curious", "inquisitive"}), "curious"),
+    (frozenset({"sympathetic", "empathetic", "caring"}), "sympathetic"),
+    (frozenset({"mysterious", "ominous"}), "mysterious"),
+    (frozenset({"whisper", "whispering", "soft", "gentle", "calm",
+                "serene", "peaceful", "quiet"}), "calm"),
+    (frozenset({"measured", "reflective", "solemn", "serious",
+                "contemplative"}), "contemplative"),
+    (frozenset({"hopeful", "anticipation", "expectant"}), "anticipation"),
+    (frozenset({"forceful", "determined", "shouting", "stress"}), "determined"),
+    (frozenset({"tired", "weary", "sighing"}), "tired"),
+    (frozenset({"happy", "content", "warm", "cheerful"}), "happy"),
+)
+
 
 @dataclass(frozen=True)
 class StageScript:
@@ -208,3 +229,16 @@ def suggested_rate(tone: str) -> float | None:
         return None
     delta = 0.04 * (fast - slow)
     return round(max(0.88, min(1.12, 1.0 + delta)), 3)
+
+
+def suggested_emotion(tone: str) -> str | None:
+    """Map recognised tone words to an engine emotion (Cartesia Sonic-3).
+
+    Returns None for neutral/unknown notes so the voice keeps its natural
+    delivery. Only engines that support emotion control use this hint.
+    """
+    words = set(re.findall(r"[a-z]+", (tone or "").lower()))
+    for candidates, emotion in _EMOTION_HINTS:
+        if words & candidates:
+            return emotion
+    return None

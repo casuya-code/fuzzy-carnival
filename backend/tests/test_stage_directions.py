@@ -9,6 +9,7 @@ from app.services.stage_directions import (
     DEFAULT_PAUSE_MS,
     LONG_PAUSE_MS,
     parse_stage_directions,
+    suggested_emotion,
     suggested_rate,
 )
 
@@ -78,6 +79,22 @@ def test_tone_hints_nudge_pace_neutrally():
     assert suggested_rate("") is None
 
 
+def test_tone_words_map_to_engine_emotions():
+    assert suggested_emotion(parse_stage_directions("[whispering] Hello.").tone) == "calm"
+    # <fast> is a pace tag, not an emotion tag.
+    assert suggested_emotion(parse_stage_directions("<fast>Go.</fast>").tone) is None
+    assert suggested_emotion(parse_stage_directions("[angry] Stop.").tone) == "angry"
+    assert suggested_emotion(parse_stage_directions("[serious tone] Listen.").tone) == "contemplative"
+    assert suggested_emotion("[relaxed, neutral] Hello.") is None
+
+
+def test_tone_emotion_is_part_of_cache_identity():
+    req = SynthesizeRequest(text="Hello.", language="en", engine="cartesia")
+    calm = _make_cache_key("cartesia", req, "Hello.", ((), 0.96, "calm"))
+    excited = _make_cache_key("cartesia", req, "Hello.", ((), 1.04, "excited"))
+    assert calm != excited
+
+
 def test_pause_timing_is_part_of_cache_identity():
     req = SynthesizeRequest(text="One. Two.", language="en", engine="kyutai")
     plain = _make_cache_key("kyutai", req, "One. Two.")
@@ -123,7 +140,7 @@ def test_run_synthesis_sends_segments_and_explicit_pause_gaps(monkeypatch, tmp_p
     routed: list[str] = []
 
     def fake_single(engine, engine_name, text, language, ref_path, out, job_id,
-                    speaking_rate=None, cancel_event=None):
+                    speaking_rate=None, cancel_event=None, emotion=None):
         routed.append(text)
         Path(out).write_bytes(b"fake audio")
         return out
