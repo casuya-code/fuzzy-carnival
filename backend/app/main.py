@@ -66,7 +66,7 @@ def _cleanup_temp_audio() -> None:
     max_age = 24 * 3600
     for child in Path(TEMP_AUDIO_DIR).iterdir():
         try:
-            if child.name == "refs_cache":
+            if child.name in {"audio", "video", "thumbs", "outputs", "refs_cache"}:
                 continue
             age = now - child.stat().st_mtime
             if age < max_age:

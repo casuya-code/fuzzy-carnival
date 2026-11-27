@@ -12,6 +12,7 @@ import {
   synthesize,
 } from "@/lib/api";
 import InfoTip from "@/components/InfoTip";
+import ProgressBar from "@/components/ProgressBar";
 
 interface Props {
   language: "en" | "sw";
@@ -340,6 +341,11 @@ export default function TextToSpeechForm({
       </div>
 
       {loading && <p className="flex items-center gap-1.5 text-sm text-amber-700">{statusHint} <InfoTip text="First runs take longer; long text or a busy server can add time." label="Creation status" /></p>}
+      {loading && (
+        <div className="pt-1">
+          <ProgressBar active={loading} label={`Creating speech… ${elapsed}s`} height={6} />
+        </div>
+      )}
     </form>
   );
 }

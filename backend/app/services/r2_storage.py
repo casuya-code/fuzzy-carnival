@@ -19,7 +19,9 @@ from app.config import (
     TEMP_AUDIO_DIR,
 )
 
-PRESIGN_EXPIRES_SEC = 3600
+# Keep generated media playable for as long as possible (S3/R2 presigned URLs
+# cap at 7 days). Frontend refreshes URLs on demand for older entries.
+PRESIGN_EXPIRES_SEC = 7 * 24 * 3600
 logger = logging.getLogger(__name__)
 
 _LOCALHOST_DEFAULTS = {

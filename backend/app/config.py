@@ -145,7 +145,7 @@ SMTP_FROM = os.getenv("SMTP_FROM", "").strip()
 SMTP_USE_TLS = _env_bool("SMTP_USE_TLS", True)
 UPLOAD_SCAN_URL = os.getenv("UPLOAD_SCAN_URL", "").strip()
 UPLOAD_SCAN_TIMEOUT_SEC = _env_float("UPLOAD_SCAN_TIMEOUT_SEC", 5.0, min_value=1.0, max_value=30.0)
-MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 25, min_value=1, max_value=500)
+MAX_UPLOAD_MB = _env_int("MAX_UPLOAD_MB", 300, min_value=1, max_value=500)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 # H10: static serving and local media fallback are opt-in, never on by default.
 SERVE_STATIC = _env_bool("SERVE_STATIC", False)

@@ -574,8 +574,9 @@ def _synthesize_sync(req: SynthesizeRequest, request: Request | None = None, can
     if not lock_already_held:
         if not _synthesize_lock.acquire(blocking=False):
             raise HTTPException(
-                status_code=429,
+                status_code=503,
                 detail="Another speech request is still running. Please wait for it to finish before starting a new one.",
+                headers={"Retry-After": "5"},
             )
         acquired_here = True
     try:
@@ -861,8 +862,9 @@ async def synthesize(req: SynthesizeRequest, request: Request):
 
     if not _synthesize_lock.acquire(blocking=False):
         raise HTTPException(
-            status_code=429,
+            status_code=503,
             detail="Another speech request is still running. Please wait for it to finish before starting a new one.",
+            headers={"Retry-After": "5"},
         )
     monitor = asyncio.create_task(_monitor_disconnect())
     try:

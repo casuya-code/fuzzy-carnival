@@ -12,6 +12,7 @@ import {
   ENGINES_BY_LANGUAGE,
   HealthResponse,
   HISTORY_LIMIT,
+  refreshMediaUrl,
   SynthesizeRequest,
   SynthesizeResponse,
   warmEngine,
@@ -54,7 +55,8 @@ export default function TextToSpeechPage() {
     if (dn !== null) setDenoiseRef(dn === "true");
 
     try {
-      const savedSpeech = loadSpeechHistory().map((s) => ({
+      const loaded = loadSpeechHistory();
+      const savedSpeech = loaded.map((s) => ({
         audio_r2_key: s.audio_r2_key,
         audio_url: s.audio_url,
         engine_used: s.engine_used || "unknown",
@@ -70,6 +72,27 @@ export default function TextToSpeechPage() {
         setResult((cur) => cur ?? savedSpeech[0]);
         setLastReq((cur) => cur ?? savedSpeech[0].request ?? null);
       }
+      // Refresh expired presigned URLs so saved speech stays playable.
+      (async () => {
+        const refreshed = await Promise.all(
+          loaded.map(async (s) => {
+            if (!s.audio_r2_key) return null;
+            const url = await refreshMediaUrl(s.audio_r2_key);
+            return url ? { key: s.audio_r2_key, url } : null;
+          })
+        );
+        setHistory((prev) =>
+          prev.map((item) => {
+            const r = refreshed.find((x) => x && x.key === item.audio_r2_key);
+            return r ? { ...item, audio_url: r.url } : item;
+          })
+        );
+        setResult((cur) => {
+          if (!cur?.audio_r2_key) return cur;
+          const r = refreshed.find((x) => x && x.key === cur.audio_r2_key);
+          return r ? { ...cur, audio_url: r.url } : cur;
+        });
+      })();
     } catch {}
   }, []);
 

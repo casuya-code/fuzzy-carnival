@@ -20,6 +20,7 @@ const TextStylePicker = dynamic(() => import("@/components/TextStylePicker"), {
 import { type Language, PackageResult, previewThumbnail, publishPackage, detectBpm } from "@/lib/api";
 
 import { addDeliverable, getDeliverableById, loadSpeechHistory, loadVideoHistory, VideoHistoryItem } from "@/lib/history";
+import { PartProgress } from "@/components/ProgressBar";
 
 import { getMediaDuration } from "@/lib/media";
 
@@ -130,6 +131,18 @@ function PublishPackagePageInner() {
   const [loudnorm, setLoudnorm] = useState(true);
 
   const [processing, setProcessing] = useState(false);
+  const [activePart, setActivePart] = useState(-1);
+
+  // Animate per-part progress while publishing (indeterminate; backend is a single request).
+  useEffect(() => {
+    if (!processing) { setActivePart(-1); return; }
+    setActivePart(0);
+    const parts = 5;
+    const interval = setInterval(() => {
+      setActivePart((i) => (i < parts - 1 ? i + 1 : i));
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [processing]);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -1155,6 +1168,15 @@ function PublishPackagePageInner() {
         </div>
 
         {processing && <p className="flex items-center gap-1.5 text-xs text-amber-600 font-mono">Rendering… <InfoTip text="Runs on Railway CPU (ultrafast); long masters take proportionally longer." label="Rendering" /></p>}
+        {processing && (
+          <div className="mt-3 rounded-lg border bg-white p-3">
+            <PartProgress
+              active={processing}
+              activeIndex={activePart}
+              parts={["Thumbnail", "Short 1", "Short 2", "Short 3", "Master upload"]}
+            />
+          </div>
+        )}
 
 
 

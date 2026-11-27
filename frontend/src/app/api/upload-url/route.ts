@@ -64,7 +64,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid contentLength is required" }, { status: 400 });
     }
     if (contentLength > MAX_UPLOAD_BYTES) {
-      return NextResponse.json({ error: "File too large" }, { status: 413 });
+      return NextResponse.json(
+        { error: `File too large (max ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB)` },
+        { status: 413 }
+      );
     }
 
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);

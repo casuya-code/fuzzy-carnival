@@ -29,7 +29,7 @@ from app.services.beat_sync_processor import (
     detect_bpm_lightweight,
     get_beat_synced_zoom_expr,
 )
-from app.services.r2_storage import download_reference, upload_output
+from app.services.r2_storage import download_reference, public_url, upload_output
 from app.services.upload_validation import (
     copy_stream_capped,
     copy_upload_capped,
@@ -41,6 +41,21 @@ from app.rate_limit import rate_limit
 from PIL import ImageFont
 
 router = APIRouter(prefix="/api/v1", tags=["storage"], dependencies=[Depends(require_api_key), Depends(rate_limit)])
+
+
+@router.get("/media/url")
+def refresh_media_url(key: str):
+    """Return a fresh (re-signed) URL for a previously generated object key.
+
+    Generated files are kept on disk/R2 until the user removes them; this
+    endpoint lets the frontend obtain a non-expired URL for an old entry.
+    """
+    if not key or ".." in key:
+        raise HTTPException(status_code=400, detail="Invalid key")
+    try:
+        return {"url": public_url(key), "key": key}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Media not found: {e}")
 logger = logging.getLogger(__name__)
 
 

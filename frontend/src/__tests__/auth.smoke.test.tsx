@@ -41,7 +41,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/r2", () => ({
   r2Configured: true,
-  MAX_UPLOAD_BYTES: 25 * 1024 * 1024,
+  MAX_UPLOAD_BYTES: 300 * 1024 * 1024,
   createPresignedUploadUrl: vi.fn(async () => "https://r2.example/signed"),
 }));
 
@@ -415,7 +415,7 @@ describe("upload-url route", () => {
     fetchMock.mockResolvedValue(jsonResponse({ user: { id: 1 } }));
 
     expect((await uploadUrlRoute(request({ ...body, contentLength: 0 }, auth))).status).toBe(400);
-    expect((await uploadUrlRoute(request({ ...body, contentLength: 25 * 1024 * 1024 + 1 }, auth))).status).toBe(413);
+    expect((await uploadUrlRoute(request({ ...body, contentLength: 300 * 1024 * 1024 + 1 }, auth))).status).toBe(413);
 
     const res = await uploadUrlRoute(request(body, auth));
     expect(res.status).toBe(200);

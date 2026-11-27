@@ -80,9 +80,17 @@ def _rate_limit_redis(r, key: str) -> None:
     minute_count = int(res[0] or 0)
     burst_count = int(res[2] or 0)
     if minute_count > RATE_LIMIT_PER_MINUTE:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please retry later.")
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please retry later.",
+            headers={"Retry-After": "10"},
+        )
     if burst_count > RATE_LIMIT_BURST:
-        raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please slow down.",
+            headers={"Retry-After": "5"},
+        )
 
 
 def _rate_limit_memory(key: str) -> None:
@@ -101,10 +109,18 @@ def _rate_limit_memory(key: str) -> None:
         while q and q[0] < cutoff:
             q.popleft()
         if len(q) >= RATE_LIMIT_PER_MINUTE:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please retry later.")
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded. Please retry later.",
+                headers={"Retry-After": "10"},
+            )
         recent = sum(1 for t in q if t >= now - 10.0)
         if recent >= RATE_LIMIT_BURST:
-            raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please slow down.",
+                headers={"Retry-After": "5"},
+            )
         q.append(now)
 
 

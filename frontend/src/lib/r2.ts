@@ -10,7 +10,7 @@ const bucketName = process.env.R2_BUCKET_NAME || "voice-clone-audio";
 export const r2Configured = Boolean(accountId && accessKeyId && secretAccessKey);
 
 /** Maximum accepted size for a single reference/media upload. */
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 300 * 1024 * 1024;
 
 const r2Client = new S3Client({
   region: "auto",

@@ -56,6 +56,7 @@ import {
 } from "@/lib/history";
 
 import { getMediaDuration } from "@/lib/media";
+import ProgressBar from "@/components/ProgressBar";
 
 import { createObjectUrlRegistry } from "@/lib/objectUrls";
 
@@ -1752,6 +1753,11 @@ function AnimatedCaptionsPageInner() {
         </div>
 
         {processing && <p className="text-xs text-amber-600 font-mono">Rendering… <InfoTip text="CPU rendering — longer videos take proportionally more time." label="Rendering" placement="bottom" /></p>}
+        {processing && (
+          <div className="mt-2">
+            <ProgressBar active={processing} label="Burning captions…" height={6} />
+          </div>
+        )}
 
         {result && (
 

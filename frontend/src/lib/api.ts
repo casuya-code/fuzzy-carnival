@@ -13,8 +13,11 @@ const USER_TOKEN_KEY = "yakodonyo_auth_token";
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split(".");
-    if (parts.length !== 3 || !parts[1]) return null;
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    // Backend issues two-part tokens (payload.signature); standard JWTs have
+    // three parts (header.payload.signature). Accept both shapes.
+    const payloadPart = parts.length === 3 ? parts[1] : parts.length === 2 ? parts[0] : null;
+    if (!payloadPart) return null;
+    const base64 = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
     const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
     const json = typeof atob === "function"
       ? atob(padded)
@@ -274,11 +277,19 @@ export interface HealthResponse {
 }
 
 function extractDetail(text: string): string {
+  if (!text) return "";
+  const trimmed = text.trim();
+  if (!trimmed) return "";
   try {
-    const j = JSON.parse(text);
+    const j = JSON.parse(trimmed);
     if (j && typeof j.detail === "string") return j.detail;
+    if (j && typeof j.detail === "number") return String(j.detail);
+    if (j && Array.isArray(j.detail)) return j.detail.map(String).join("; ");
+    if (j && typeof j.message === "string") return j.message;
+    if (j && typeof j.error === "string") return j.error;
   } catch {}
-  return text;
+  // Avoid dumping huge HTML error pages into the UI.
+  return trimmed.length > 300 ? trimmed.slice(0, 297) + "…" : trimmed;
 }
 
 export async function checkHealth(): Promise<HealthResponse> {
@@ -287,25 +298,53 @@ export async function checkHealth(): Promise<HealthResponse> {
   return res.json();
 }
 
+async function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  await new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function synthesize(
   payload: SynthesizeRequest,
   signal?: AbortSignal
 ): Promise<SynthesizeResponse> {
   const started = performance.now();
+  const maxRetries = 3;
   try {
-    const res = await fetch(`${API_BASE}/api/v1/synthesize`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
-      body: JSON.stringify(payload),
-      signal,
-    });
-    if (!res.ok) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const res = await fetch(`${API_BASE}/api/v1/synthesize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        reportSpeechTiming(payload, data, started);
+        return data;
+      }
       const detail = extractDetail(await res.text());
-      throw new Error(detail || `Synthesis failed (${res.status})`);
+      const retryAfter = Number(res.headers.get("Retry-After"));
+      const busy = /still running|rate limit|too many requests/i.test(detail);
+      const retryable = res.status === 429 || (res.status === 503 && (Number.isFinite(retryAfter) && retryAfter > 0 || busy));
+      if (retryable && attempt < maxRetries) {
+        const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 5000;
+        await waitForRetry(delayMs, signal);
+        continue;
+      }
+      throw apiError(detail || `Synthesis failed (${res.status})`, res.status);
     }
-    const data = await res.json();
-    reportSpeechTiming(payload, data, started);
-    return data;
+    throw apiError("Synthesis failed", 500);
   } catch (e) {
     reportMetric("speech.generate", performance.now() - started, {
       engine: (payload as { engine?: string }).engine || "default",
@@ -350,6 +389,20 @@ export async function warmEngine(engine: Engine): Promise<boolean> {
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+export async function refreshMediaUrl(key: string): Promise<string | null> {
+  if (!key) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/media/url?key=${encodeURIComponent(key)}`, {
+      headers: { ...backendAuthHeaders() },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data?.url === "string" ? data.url : null;
+  } catch {
+    return null;
   }
 }
 

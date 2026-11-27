@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { clearDeliverables, DeliverableItem, loadDeliverables, removeDeliverable } from "@/lib/history";
+import { refreshMediaUrl } from "@/lib/api";
 import InfoTip from "@/components/InfoTip";
 
 const KIND_LABEL: Record<DeliverableItem["kind"], string> = {
@@ -72,7 +73,19 @@ export default function HistoryPage() {
   const [items, setItems] = useState<DeliverableItem[]>([]);
 
   useEffect(() => {
-    setItems(loadDeliverables());
+    const loaded = loadDeliverables();
+    setItems(loaded);
+    // Refresh any expired presigned URLs so saved files stay playable.
+    (async () => {
+      const refreshed = await Promise.all(
+        loaded.map(async (it) => {
+          if (!it.r2_key) return it;
+          const url = await refreshMediaUrl(it.r2_key);
+          return url ? { ...it, url } : it;
+        })
+      );
+      setItems(refreshed);
+    })();
   }, []);
 
   const handleRemove = (url: string) => {

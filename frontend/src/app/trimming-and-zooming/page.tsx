@@ -53,6 +53,7 @@ import { mapWithConcurrency } from "@/lib/asyncPool";
 import { fmtSize } from "@/lib/format";
 
 import { addDeliverable, addVideoHistory, getDeliverableById, loadSpeechHistory, SpeechHistoryItem } from "@/lib/history";
+import ProgressBar from "@/components/ProgressBar";
 
 import {
 
@@ -1551,11 +1552,16 @@ function TrimmingAndZoomingPageInner() {
 
         {processing && (
 
-          <p className="text-xs text-amber-600 font-mono">
+          <>
+            <p className="text-xs text-amber-600 font-mono">
 
-            {progress || "Rendering…"} <InfoTip text="Running FFmpeg on CPU. Large jobs run in smaller batches to avoid failures." label="Rendering" placement="bottom" />
+              {progress || "Rendering…"} <InfoTip text="Running FFmpeg on CPU. Large jobs run in smaller batches to avoid failures." label="Rendering" placement="bottom" />
 
-          </p>
+            </p>
+            <div className="mt-2">
+              <ProgressBar active={processing} label={progress || "Processing…"} height={6} />
+            </div>
+          </>
 
         )}
 

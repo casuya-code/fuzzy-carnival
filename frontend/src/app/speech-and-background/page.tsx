@@ -29,6 +29,7 @@ import {
   SpeechHistoryItem,
 
 } from "@/lib/history";
+import ProgressBar from "@/components/ProgressBar";
 
 
 
@@ -1177,6 +1178,7 @@ function SpeechAndBackgroundPageInner() {
             >
 
               {uploading ? "Saving…" : "＋ Upload"}
+             {uploading && <div className="mt-2"><ProgressBar active={uploading} label="Uploading…" height={6} /></div>}
 
             </button>
 
