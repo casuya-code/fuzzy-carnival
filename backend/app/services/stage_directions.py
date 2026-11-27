@@ -43,6 +43,8 @@ _PAREN_TOKENS = (
     "pause", "long pause", "short pause", "beat",
     "laughing", "chuckling", "sighing", "soft tone", "whispering",
     "in a hurry tone", "shouting", "excited",
+    # Fish S1 node tokens
+    "laugh", "cough", "lip-smacking", "lip smacking", "sigh",
 )
 
 _DIRECTIVE_RE = re.compile(
@@ -116,6 +118,10 @@ def _pause_ms(content: str) -> int | None:
     if value in {"pause", "beat", "silence", "hold", "breath", "break", "longbreak"}:
         return DEFAULT_PAUSE_MS
     if value in {"short pause", "brief pause", "micro pause", "short beat", "short break"}:
+        return SHORT_PAUSE_MS
+    # Non-speech sound effects: we can't synthesize the sound itself, but a
+    # brief silence keeps the rhythm natural instead of speaking the token.
+    if value in {"laugh", "cough", "sigh", "lip-smacking", "lip smacking"}:
         return SHORT_PAUSE_MS
     if value in {"long pause", "long beat", "dramatic pause", "long-break", "long break"}:
         return LONG_PAUSE_MS

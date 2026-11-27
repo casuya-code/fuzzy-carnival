@@ -135,6 +135,15 @@ def test_fish_style_parenthesised_tokens():
     assert parse_stage_directions("Meet me (at noon).").spoken == "Meet me (at noon)."
 
 
+def test_fish_s1_non_speech_nodes_are_stripped_not_spoken():
+    script = parse_stage_directions("Hello (laugh) world. (cough) Next.")
+    assert "laugh" not in script.spoken
+    assert "cough" not in script.spoken
+    assert script.spoken == "Hello world. Next."
+    assert script.pause_count == 2
+    assert all(gap == 350 for gap in script.gaps_ms)
+
+
 def test_run_synthesis_sends_segments_and_explicit_pause_gaps(monkeypatch, tmp_path):
     monkeypatch.setattr(synth, "_ffmpeg_available", lambda: True)
     routed: list[str] = []
