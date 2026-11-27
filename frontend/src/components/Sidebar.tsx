@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import InfoTip from "@/components/InfoTip";
 import { useAuth } from "@/components/AuthProvider";
 
@@ -19,8 +19,16 @@ const NAV = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const prefetched = useRef<Set<string>>(new Set());
   const [open, setOpen] = useState(false);
   const { user, loading, logout } = useAuth();
+
+  const prefetchHref = (href: string) => {
+    if (prefetched.current.has(href)) return;
+    prefetched.current.add(href);
+    try { router.prefetch(href); } catch {}
+  };
 
   const emailInitial = (user?.email || "?").trim().charAt(0).toUpperCase() || "?";
   const [currentSearch, setCurrentSearch] = useState("");
@@ -97,6 +105,8 @@ export default function Sidebar() {
                   key={item.href}
                   href={item.href}
                   prefetch={false}
+                  onMouseEnter={() => prefetchHref(item.href)}
+                  onFocus={() => prefetchHref(item.href)}
                   onClick={() => setOpen(false)}
                   className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 transition ${
                     active

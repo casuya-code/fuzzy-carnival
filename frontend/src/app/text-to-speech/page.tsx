@@ -17,6 +17,7 @@ import {
   SynthesizeResponse,
   warmEngine,
 } from "@/lib/api";
+import { mapWithConcurrency } from "@/lib/asyncPool";
 import { addSpeechHistory, loadSpeechHistory, removeSpeechHistory, updateSpeechHistory } from "@/lib/history";
 import EngineSelector from "@/components/EngineSelector";
 import TextToSpeechForm from "@/components/TextToSpeechForm";
@@ -73,14 +74,13 @@ export default function TextToSpeechPage() {
         setLastReq((cur) => cur ?? savedSpeech[0].request ?? null);
       }
       // Refresh expired presigned URLs so saved speech stays playable.
+      // Bounded concurrency avoids a mount-time request burst.
       (async () => {
-        const refreshed = await Promise.all(
-          loaded.map(async (s) => {
-            if (!s.audio_r2_key) return null;
-            const url = await refreshMediaUrl(s.audio_r2_key);
-            return url ? { key: s.audio_r2_key, url } : null;
-          })
-        );
+        const refreshed = await mapWithConcurrency(loaded, 4, async (s) => {
+          if (!s.audio_r2_key) return null;
+          const url = await refreshMediaUrl(s.audio_r2_key);
+          return url ? { key: s.audio_r2_key, url } : null;
+        });
         setHistory((prev) =>
           prev.map((item) => {
             const r = refreshed.find((x) => x && x.key === item.audio_r2_key);
@@ -177,7 +177,9 @@ export default function TextToSpeechPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
     const ping = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       setBackendStatus("checking");
       try {
         const data = await checkHealth();
@@ -192,11 +194,14 @@ export default function TextToSpeechPage() {
         }
       }
     };
-    ping();
-    const id = setInterval(ping, 60000);
+    const onVisible = () => { if (document.visibilityState === "visible") void ping(); };
+    void ping();
+    timer = setInterval(ping, 60000);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 

@@ -41,6 +41,7 @@ export function getUserToken(): string | null {
       const exp = typeof claims.exp === "number" ? claims.exp : Number(claims.exp);
       if (Number.isFinite(exp) && exp <= Date.now() / 1000) {
         window.localStorage.removeItem(USER_TOKEN_KEY);
+        window.localStorage.removeItem("yakodonyo_auth_user");
         return null;
       }
     }
@@ -95,6 +96,7 @@ export function isAuthError(error: unknown): boolean {
 export function clearTokenIfAuthError(error: unknown): boolean {
   if (!isAuthError(error)) return false;
   setUserToken(null);
+  try { if (typeof window !== "undefined") window.localStorage.removeItem("yakodonyo_auth_user"); } catch {}
   return true;
 }
 
@@ -393,18 +395,36 @@ export async function warmEngine(engine: Engine): Promise<boolean> {
   }
 }
 
+const _mediaUrlCache = new Map<string, { url: string; exp: number }>();
+const _mediaUrlInflight = new Map<string, Promise<string | null>>();
+const MEDIA_URL_TTL_MS = 5 * 60 * 1000;
+
 export async function refreshMediaUrl(key: string): Promise<string | null> {
   if (!key) return null;
-  try {
-    const res = await fetch(`${API_BASE}/api/v1/media/url?key=${encodeURIComponent(key)}`, {
-      headers: { ...backendAuthHeaders() },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return typeof data?.url === "string" ? data.url : null;
-  } catch {
-    return null;
-  }
+  const now = Date.now();
+  const cached = _mediaUrlCache.get(key);
+  if (cached && cached.exp > now) return cached.url;
+  const inflight = _mediaUrlInflight.get(key);
+  if (inflight) return inflight;
+
+  const req = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/media/url?key=${encodeURIComponent(key)}`, {
+        headers: { ...backendAuthHeaders() },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const url = typeof data?.url === "string" ? data.url : null;
+      if (url) _mediaUrlCache.set(key, { url, exp: Date.now() + MEDIA_URL_TTL_MS });
+      return url;
+    } catch {
+      return null;
+    } finally {
+      _mediaUrlInflight.delete(key);
+    }
+  })();
+  _mediaUrlInflight.set(key, req);
+  return req;
 }
 
 export async function requestUploadUrl(
@@ -432,6 +452,7 @@ export async function uploadToR2(uploadUrl: string, file: Blob, contentType: str
       method: "PUT",
       headers: {
         "Content-Type": signedType,
+        ...(!isLocal ? { "Cache-Control": "public, max-age=31536000, immutable" } : {}),
         ...(isLocal ? backendAuthHeaders() : {}),
       },
       body: file,
@@ -458,6 +479,24 @@ export async function mixAudio(payload: {
   if (!res.ok) {
     const detail = extractDetail(await res.text());
     throw new Error(detail || `Mix failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function joinAudio(payload: {
+  audio_keys: string[];
+  gap_ms?: number;
+  crossfade_ms?: number;
+  output_format?: "mp3" | "wav";
+}): Promise<{ audio_r2_key?: string; audio_url: string; duration_seconds?: number; parts?: number }> {
+  const res = await fetch(`${API_BASE}/api/v1/audio/join`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...backendAuthHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const detail = extractDetail(await res.text());
+    throw new Error(detail || `Join failed (${res.status})`);
   }
   return res.json();
 }

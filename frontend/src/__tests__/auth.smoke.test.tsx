@@ -268,7 +268,10 @@ describe("API requests", () => {
     const blob = new Blob(["a"], { type: "audio/webm;codecs=opus" });
 
     await uploadToR2("https://r2.example/signed?sig=1", blob, blob.type);
-    expect(fetchMock.mock.calls[0][1].headers).toEqual({ "Content-Type": "audio/webm" });
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({
+      "Content-Type": "audio/webm",
+      "Cache-Control": "public, max-age=31536000, immutable",
+    });
 
     await uploadToR2(`${API_BASE}/api/v1/local-upload/references/a.webm`, blob, blob.type);
     const localCall = fetchMock.mock.calls.find(([url]) =>

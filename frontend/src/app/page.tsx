@@ -71,10 +71,18 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
-    getAccountStats()
-      .then((stats) => { if (active) setTotalUsers(stats.total_users); })
-      .catch(() => { if (active) setTotalUsers(null); });
-    return () => { active = false; };
+    const run = () => {
+      getAccountStats()
+        .then((stats) => { if (active) setTotalUsers(stats.total_users); })
+        .catch(() => { if (active) setTotalUsers(null); });
+    };
+    const ric = (window as any).requestIdleCallback;
+    const id = typeof ric === "function" ? ric(run, { timeout: 1500 }) : window.setTimeout(run, 250);
+    return () => {
+      active = false;
+      if (typeof ric === "function") (window as any).cancelIdleCallback?.(id);
+      else window.clearTimeout(id as number);
+    };
   }, [user?.id]);
 
   const initial = (user?.email || "?").trim().charAt(0).toUpperCase() || "?";

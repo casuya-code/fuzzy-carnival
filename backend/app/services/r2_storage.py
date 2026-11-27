@@ -203,11 +203,17 @@ def upload_output(local_path: str, key: str) -> str:
             shutil.copyfile(local_path, dest)
         return public_url(key)
 
+    extra = {"ContentType": _content_type(local_path)}
+    # Generated keys are content-addressed/timestamped; immutable caching is safe.
+    if key.startswith(("outputs/", "audio/", "video/", "thumbs/", "refs_cache/")):
+        extra["CacheControl"] = "public, max-age=31536000, immutable"
+    else:
+        extra["CacheControl"] = "public, max-age=3600"
     _client().upload_file(
         local_path,
         R2_BUCKET_NAME,
         key,
-        ExtraArgs={"ContentType": _content_type(local_path)},
+        ExtraArgs=extra,
     )
     return public_url(key)
 

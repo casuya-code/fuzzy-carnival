@@ -172,6 +172,7 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
           controls
           src={result.audio_url}
           className="w-full h-11"
+          preload="auto"
           autoPlay
           onLoadedMetadata={onLoaded}
         />
@@ -238,7 +239,7 @@ export default function AudioPlayer({ result, history = [], onSelect, lastReq, o
                 <span className="font-medium text-green-700">Downloadable version is ready</span>
                 {rendered.duration_seconds ? <span className="text-gray-500">{rendered.duration_seconds.toFixed(1)} seconds</span> : null}
               </div>
-              <audio controls src={rendered.audio_url} className="w-full h-9" />
+              <audio controls src={rendered.audio_url} preload="metadata" className="w-full h-9" />
               <a
                 href={rendered.audio_url}
                 download={`${filenameBase}-${exportSpeed}x.mp3`}

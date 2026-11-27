@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { clearDeliverables, DeliverableItem, loadDeliverables, removeDeliverable } from "@/lib/history";
 import { refreshMediaUrl } from "@/lib/api";
+import { mapWithConcurrency } from "@/lib/asyncPool";
 import InfoTip from "@/components/InfoTip";
 
 const KIND_LABEL: Record<DeliverableItem["kind"], string> = {
@@ -76,14 +77,13 @@ export default function HistoryPage() {
     const loaded = loadDeliverables();
     setItems(loaded);
     // Refresh any expired presigned URLs so saved files stay playable.
+    // Bounded concurrency avoids a mount-time request burst on large histories.
     (async () => {
-      const refreshed = await Promise.all(
-        loaded.map(async (it) => {
-          if (!it.r2_key) return it;
-          const url = await refreshMediaUrl(it.r2_key);
-          return url ? { ...it, url } : it;
-        })
-      );
+      const refreshed = await mapWithConcurrency(loaded, 4, async (it) => {
+        if (!it.r2_key) return it;
+        const url = await refreshMediaUrl(it.r2_key);
+        return url ? { ...it, url } : it;
+      });
       setItems(refreshed);
     })();
   }, []);

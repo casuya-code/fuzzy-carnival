@@ -679,7 +679,7 @@ function PublishPackagePageInner() {
 
                 {videoHistory.length === 0 && <p className="flex items-center gap-1.5 text-[11px] text-gray-400">No videos yet. <InfoTip text="Create one in Edit Video or Add Captions, or upload." label="No videos" /></p>}
 
-                {selectedVideo && <video controls src={selectedVideo.video_url} className="w-full rounded-lg bg-black max-h-56" />}
+                {selectedVideo && <video controls preload="metadata" src={selectedVideo.video_url} className="w-full rounded-lg bg-black max-h-56" />}
 
               </div>
 
@@ -703,7 +703,7 @@ function PublishPackagePageInner() {
 
                 {masterFile && <p className="text-[11px] font-mono text-gray-500">{masterFile.name} · {deviceDuration.toFixed(1)}s</p>}
 
-                {devicePreviewUrl && <video controls src={devicePreviewUrl} className="w-full rounded-lg bg-black max-h-56" />}
+                {devicePreviewUrl && <video controls preload="metadata" src={devicePreviewUrl} className="w-full rounded-lg bg-black max-h-56" />}
 
               </div>
 
@@ -889,7 +889,7 @@ function PublishPackagePageInner() {
 
                 {/* eslint-disable-next-line @next/next/no-img-element -- dynamic backend/R2 URL, not a static asset */}
 
-                <img src={thumb.url} alt="Generated thumbnail preview" className="w-full rounded-lg border shadow-sm" />
+                <img src={thumb.url} alt="Generated thumbnail preview" loading="lazy" decoding="async" className="w-full rounded-lg border shadow-sm" />
 
                 <p className="text-[11px] font-mono text-gray-500 truncate">{thumb.key}</p>
 
@@ -1202,7 +1202,7 @@ function PublishPackagePageInner() {
 
                 {/* eslint-disable-next-line @next/next/no-img-element -- dynamic backend/R2 URL, not a static asset */}
 
-                <img src={result.thumbnail_url} alt="Final YouTube thumbnail" className="w-full rounded-lg border shadow-sm" />
+                <img src={result.thumbnail_url} alt="Final YouTube thumbnail" loading="lazy" decoding="async" className="w-full rounded-lg border shadow-sm" />
 
                 <p className="text-[11px] font-mono text-gray-500">
 
@@ -1218,7 +1218,7 @@ function PublishPackagePageInner() {
 
                 <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Master film</div>
 
-                <video controls src={result.master_url} className="w-full rounded-lg bg-black max-h-64" />
+                <video controls preload="metadata" src={result.master_url} className="w-full rounded-lg bg-black max-h-64" />
 
                 <p className="text-[11px] font-mono text-gray-500">
 
@@ -1256,7 +1256,7 @@ function PublishPackagePageInner() {
 
                     </div>
 
-                    <video controls src={s.url} className="w-full rounded-lg bg-black max-h-72" />
+                    <video controls preload="metadata" src={s.url} className="w-full rounded-lg bg-black max-h-72" />
 
                     <a href={s.url} download={`short_part_${s.part}_9x16.mp4`} className="inline-block rounded-md border border-gray-300 px-2.5 py-1 text-[11px] text-gray-700 hover:bg-gray-100">⬇ Short {s.part}</a>
 

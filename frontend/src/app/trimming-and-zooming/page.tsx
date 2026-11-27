@@ -1494,7 +1494,7 @@ function TrimmingAndZoomingPageInner() {
 
                 </select>
 
-                {selectedAudio && <audio controls src={selectedAudio.audio_url} className="w-full h-8" />}
+                {selectedAudio && <audio controls preload="metadata" src={selectedAudio.audio_url} className="w-full h-8" />}
 
                 {audioHistory.length === 0 && <p className="text-[11px] text-gray-400">No saved audio. <InfoTip text="Create audio in Speech or Mix Audio, or upload a file." label="Saved audio" placement="bottom" /></p>}
 
@@ -1583,7 +1583,7 @@ function TrimmingAndZoomingPageInner() {
 
             </div>
 
-            <video controls src={result.video_url} className="w-full rounded-lg bg-black max-h-[480px]" />
+            <video controls preload="metadata" src={result.video_url} className="w-full rounded-lg bg-black max-h-[480px]" />
 
             <div className="flex items-center gap-3 flex-wrap">
 

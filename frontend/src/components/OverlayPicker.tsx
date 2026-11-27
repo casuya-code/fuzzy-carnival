@@ -67,7 +67,7 @@ export default function OverlayPicker({
         <div className="flex items-center gap-3 rounded-lg border p-2">
           {preview && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={preview} alt="Overlay preview" className="h-12 w-12 rounded bg-gray-100 object-contain" />
+            <img src={preview} alt="Overlay preview" loading="lazy" decoding="async" className="h-12 w-12 rounded bg-gray-100 object-contain" />
           )}
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-medium text-gray-800" title={file.name}>{file.name}</div>

@@ -627,6 +627,81 @@ def stitch_voice_with_crossfades(
     return output_path
 
 
+def join_audio_files(
+    audio_paths: list[str],
+    output_path: str,
+    gap_ms: int = 0,
+    crossfade_ms: int = 0,
+) -> str:
+    """Join audio files in order into one output file.
+
+    Uses FFmpeg so inputs can be mixed formats (mp3/wav/m4a...). A uniform
+    gap can be inserted between items; an optional micro-crossfade smooths
+    boundaries when gap is 0.
+    """
+    if not audio_paths:
+        raise ValueError("No audio files to join")
+    if not _ffmpeg_available():
+        raise RuntimeError("FFmpeg required for joining audio")
+
+    gap_ms = max(0, min(10_000, int(gap_ms)))
+    crossfade_ms = max(0, min(2_000, int(crossfade_ms)))
+    crossfade_sec = crossfade_ms / 1000.0
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    ext = Path(output_path).suffix.lower()
+    codec = ["-c:a", "pcm_s16le"] if ext == ".wav" else ["-c:a", "libmp3lame", "-b:a", "128k"]
+
+    if len(audio_paths) == 1:
+        cmd = [
+            "ffmpeg", "-nostdin", "-y", "-i", audio_paths[0],
+            "-vn", *codec, output_path,
+        ]
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return output_path
+
+    inputs: list[str] = []
+    filter_parts: list[str] = []
+    for idx, path in enumerate(audio_paths):
+        inputs.extend(["-i", path])
+        label = f"a{idx}"
+        if idx < len(audio_paths) - 1 and gap_ms > 0:
+            filter_parts.append(
+                f"[{idx}:a]aresample=44100,aformat=channel_layouts=stereo,"
+                f"apad=pad_dur={gap_ms / 1000.0}[{label}];"
+            )
+        else:
+            filter_parts.append(
+                f"[{idx}:a]aresample=44100,aformat=channel_layouts=stereo[{label}];"
+            )
+
+    if crossfade_sec > 0 and gap_ms == 0:
+        # Overlap-adjacent crossfade chain.
+        prev = "a0"
+        for idx in range(1, len(audio_paths)):
+            out_label = "out" if idx == len(audio_paths) - 1 else f"m{idx}"
+            filter_parts.append(
+                f"[{prev}][a{idx}]acrossfade=d={crossfade_sec:.3f}:c1=tri:c2=tri[{out_label}];"
+            )
+            prev = out_label
+        final_label = "[out]"
+    else:
+        labels = "".join(f"[a{i}]" for i in range(len(audio_paths)))
+        filter_parts.append(f"{labels}concat=n={len(audio_paths)}:v=0:a=1[out]")
+        final_label = "[out]"
+
+    cmd = [
+        "ffmpeg", "-nostdin", "-y",
+        *inputs,
+        "-filter_complex", "".join(filter_parts).rstrip(";"),
+        "-map", final_label,
+        *codec,
+        output_path,
+    ]
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    return output_path
+
+
 SFX_KINDS = ("whoosh", "pop", "chime", "click", "applause", "lift")
 # The transition UI calls the rising swell "lift"; the local FFmpeg generator
 # calls the same effect "chime" (M18).

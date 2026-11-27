@@ -22,6 +22,7 @@ from app.services.audio_processor import (
     analyze_reference,
     generate_sfx,
     get_duration,
+    join_audio_files,
     mix_voice_with_music,
     transform_audio,
 )
@@ -219,6 +220,59 @@ def transform(req: TransformRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Transform failed: {e}")
+    finally:
+        _cleanup_dir(work_dir)
+
+
+class JoinRequest(BaseModel):
+    audio_keys: list[str] = Field(..., min_length=2, max_length=20)
+    gap_ms: int = Field(0, ge=0, le=10_000)
+    crossfade_ms: int = Field(0, ge=0, le=2_000)
+    output_format: str = Field("mp3", pattern="^(mp3|wav)$")
+
+
+@router.post("/audio/join")
+def join(req: JoinRequest):
+    """Join 2+ audio files in order into a single downloadable file."""
+    if not _ffmpeg_available():
+        raise HTTPException(status_code=503, detail="FFmpeg required for joining audio")
+
+    keys = [k.strip() for k in req.audio_keys if isinstance(k, str) and k.strip()]
+    if len(keys) < 2:
+        raise HTTPException(status_code=400, detail="Provide at least 2 audio files to join")
+    if len(keys) > 20:
+        raise HTTPException(status_code=400, detail="At most 20 audio files can be joined at once")
+
+    job_id = uuid.uuid4().hex
+    work_dir = TEMP_AUDIO_DIR / "join_jobs" / job_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    ext = ".wav" if req.output_format == "wav" else ".mp3"
+    out_path = str(work_dir / f"joined_{job_id}{ext}")
+    try:
+        local_paths: list[str] = []
+        for i, key in enumerate(keys):
+            local_paths.append(_resolve_audio_key(key, dest=work_dir / f"part_{i}{Path(key).suffix or '.bin'}"))
+
+        join_audio_files(
+            local_paths,
+            out_path,
+            gap_ms=req.gap_ms,
+            crossfade_ms=req.crossfade_ms,
+        )
+        r2_key = f"outputs/joined_{job_id}{ext}"
+        url = upload_output(out_path, r2_key)
+        return {
+            "audio_r2_key": r2_key,
+            "audio_url": url,
+            "duration_seconds": get_duration(out_path),
+            "parts": len(local_paths),
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Join failed: {e}")
     finally:
         _cleanup_dir(work_dir)
 

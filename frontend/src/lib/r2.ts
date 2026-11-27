@@ -42,6 +42,7 @@ export async function createPresignedUploadUrl(
     Key: key,
     ContentType: contentType,
     ContentLength: contentLength,
+    CacheControl: key.startsWith("references/") ? "public, max-age=31536000, immutable" : "public, max-age=3600",
   });
   const url = await getSignedUrl(r2Client, command, { expiresIn: 300 });
   return url;

@@ -461,7 +461,7 @@ export default function VoiceRecorder({ onUploaded, voiceKey, denoiseRef, onDeno
               Save sample
             </a>
           </div>
-          <audio controls src={previewUrl} className="w-full h-9" />
+          <audio controls src={previewUrl} preload="metadata" className="w-full h-9" />
         </div>
       )}
 

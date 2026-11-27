@@ -10,7 +10,7 @@ import { useSearchParams } from "next/navigation";
 
 import InfoTip from "@/components/InfoTip";
 
-import { generateSfx, mixAudio, requestUploadUrl, uploadToR2 } from "@/lib/api";
+import { generateSfx, joinAudio, mixAudio, requestUploadUrl, uploadToR2 } from "@/lib/api";
 
 import { fmtSize } from "@/lib/format";
 
@@ -284,6 +284,16 @@ function SpeechAndBackgroundPageInner() {
   const [sfxPreview, setSfxPreview] = useState<{ kind: string; url: string } | null>(null);
 
   const sfxPreviewRef = useRef<string | null>(null);
+
+  // Join audio files
+  type JoinItem = { id: string; name: string; r2_key: string; url: string; size?: number };
+  const [joinItems, setJoinItems] = useState<JoinItem[]>([]);
+  const [joinGapMs, setJoinGapMs] = useState(0);
+  const [joinCrossfadeMs, setJoinCrossfadeMs] = useState(0);
+  const [joinFormat, setJoinFormat] = useState<"mp3" | "wav">("mp3");
+  const [joining, setJoining] = useState(false);
+  const [joinResult, setJoinResult] = useState<{ audio_r2_key?: string; audio_url: string; duration_seconds?: number; parts?: number } | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   const searchParams = useSearchParams();
 
@@ -674,6 +684,81 @@ function SpeechAndBackgroundPageInner() {
   };
 
 
+
+  const addJoinFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    setJoinError(null);
+    for (const file of list) {
+      if (!file.type.startsWith("audio/") && !/\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name)) {
+        setJoinError(`Unsupported file: ${file.name}`);
+        continue;
+      }
+      try {
+        const ext = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "mp3";
+        const contentType = file.type || `audio/${ext}`;
+        const { upload_url, key } = await requestUploadUrl(file.name, contentType, file.size);
+        await uploadToR2(upload_url, file, contentType);
+        const url = URL.createObjectURL(file);
+        setJoinItems((prev) => [...prev, {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          r2_key: key,
+          url,
+          size: file.size,
+        }]);
+      } catch (e: any) {
+        setJoinError(e?.message || `Failed to add ${file.name}`);
+      }
+    }
+  };
+
+  const removeJoinItem = (id: string) => {
+    setJoinItems((prev) => {
+      const it = prev.find((x) => x.id === id);
+      if (it?.url?.startsWith("blob:")) URL.revokeObjectURL(it.url);
+      return prev.filter((x) => x.id !== id);
+    });
+  };
+
+  const moveJoinItem = (idx: number, dir: -1 | 1) => {
+    setJoinItems((prev) => {
+      const j = idx + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = prev.slice();
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return next;
+    });
+  };
+
+  const resetJoin = () => {
+    setJoinItems((prev) => { prev.forEach((i) => { if (i.url?.startsWith("blob:")) URL.revokeObjectURL(i.url); }); return []; });
+    setJoinResult(null);
+    setJoinError(null);
+    setJoinGapMs(0);
+    setJoinCrossfadeMs(0);
+    setJoinFormat("mp3");
+  };
+
+  const handleJoin = async () => {
+    setJoinError(null);
+    setJoinResult(null);
+    if (joinItems.length < 2) { setJoinError("Add at least 2 audio files to join."); return; }
+    setJoining(true);
+    try {
+      const res = await joinAudio({
+        audio_keys: joinItems.map((i) => i.r2_key),
+        gap_ms: joinGapMs,
+        crossfade_ms: joinCrossfadeMs,
+        output_format: joinFormat,
+      });
+      setJoinResult(res);
+    } catch (e: any) {
+      setJoinError(e?.message || "Join failed");
+    } finally {
+      setJoining(false);
+    }
+  };
 
   const handleMerge = async () => {
 
@@ -1240,7 +1325,7 @@ function SpeechAndBackgroundPageInner() {
 
               <span className="text-[11px] font-mono text-gray-500">SFX · {sfxPreview.kind}</span>
 
-              <audio controls src={sfxPreview.url} className="h-8 w-full max-w-xs" />
+              <audio controls preload="metadata" src={sfxPreview.url} className="h-8 w-full max-w-xs" />
 
             </div>
 
@@ -1440,7 +1525,7 @@ function SpeechAndBackgroundPageInner() {
 
 
 
-        <audio ref={audioRef} onEnded={() => setPlayingId(null)} className="hidden" />
+        <audio ref={audioRef} preload="metadata" onEnded={() => setPlayingId(null)} className="hidden" />
 
       </section>
 
@@ -1790,7 +1875,7 @@ function SpeechAndBackgroundPageInner() {
 
             </div>
 
-            <audio controls src={mergeResult.audio_url} className="w-full h-10" autoPlay />
+            <audio controls src={mergeResult.audio_url} className="w-full h-10" preload="auto" autoPlay />
 
             <div className="flex items-center gap-3 flex-wrap">
 
@@ -1820,6 +1905,83 @@ function SpeechAndBackgroundPageInner() {
 
         )}
 
+      </section>
+
+      <section className="rounded-xl border bg-white p-4 sm:p-5 shadow-sm space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">Join audios <InfoTip text="Concatenate two or more audio files in order into one downloadable file." label="Join audios" /></h2>
+          <p className="text-xs text-gray-500 mt-0.5">Add 2+ audio files, reorder them, then export a single joined MP3/WAV.</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="rounded-md bg-gray-900 px-3 py-2 text-xs font-medium text-white cursor-pointer hover:bg-gray-800">
+            + Add audio files
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
+              multiple
+              className="hidden"
+              onChange={(e) => { void addJoinFiles(e.target.files || []); e.currentTarget.value = ""; }}
+            />
+          </label>
+          <span className="text-[11px] text-gray-400">{joinItems.length} file{joinItems.length === 1 ? "" : "s"}</span>
+        </div>
+
+        {joinItems.length > 0 && (
+          <ul className="divide-y rounded-md border bg-gray-50">
+            {joinItems.map((item, idx) => (
+              <li key={item.id} className="flex items-center gap-2 px-3 py-2 text-xs">
+                <span className="w-5 text-[11px] font-mono text-gray-400">{idx + 1}</span>
+                <span className="flex-1 truncate text-gray-700" title={item.name}>{item.name}</span>
+                <span className="text-[10px] text-gray-400">{item.size ? fmtSize(item.size) : ""}</span>
+                <button type="button" onClick={() => moveJoinItem(idx, -1)} disabled={idx === 0} className="rounded border px-1.5 py-0.5 text-[11px] disabled:opacity-30">↑</button>
+                <button type="button" onClick={() => moveJoinItem(idx, 1)} disabled={idx === joinItems.length - 1} className="rounded border px-1.5 py-0.5 text-[11px] disabled:opacity-30">↓</button>
+                <button type="button" onClick={() => removeJoinItem(item.id)} className="rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-50">✕</button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="text-xs text-gray-600">
+            Gap between clips <span className="font-mono text-gray-400">{joinGapMs} ms</span>
+            <input type="range" min={0} max={5000} step={100} value={joinGapMs} onChange={(e) => setJoinGapMs(parseInt(e.target.value, 10))} className="mt-1 w-full accent-gray-900" />
+          </label>
+          <label className="text-xs text-gray-600">
+            Crossfade (gap=0) <span className="font-mono text-gray-400">{joinCrossfadeMs} ms</span>
+            <input type="range" min={0} max={500} step={10} value={joinCrossfadeMs} onChange={(e) => setJoinCrossfadeMs(parseInt(e.target.value, 10))} className="mt-1 w-full accent-gray-900" />
+          </label>
+          <label className="text-xs text-gray-600">
+            Format
+            <select value={joinFormat} onChange={(e) => setJoinFormat(e.target.value as "mp3" | "wav")} className="mt-1 w-full rounded-md border px-2 py-1.5 text-xs">
+              <option value="mp3">MP3</option>
+              <option value="wav">WAV</option>
+            </select>
+          </label>
+        </div>
+
+        {joinError && <p className="rounded-md bg-red-50 border border-red-100 p-2 text-sm text-red-700">{joinError}</p>}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={handleJoin} disabled={joining || joinItems.length < 2} className="rounded-md bg-gray-900 px-4 py-2 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50">
+            {joining ? "Joining…" : "Join & export"}
+          </button>
+          <button type="button" onClick={resetJoin} className="rounded-md border border-gray-300 px-4 py-2 text-xs text-gray-600 hover:bg-gray-50">Reset</button>
+        </div>
+
+        {joinResult && (
+          <div className="rounded-lg bg-green-50 border border-green-200 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <p className="text-sm font-semibold text-green-800">Joined audio ready</p>
+              {joinResult.duration_seconds ? <span className="text-xs font-mono text-green-700 bg-green-100 px-2 py-0.5 rounded">T = {joinResult.duration_seconds.toFixed(2)} s · {joinResult.parts} parts</span> : null}
+            </div>
+            <audio controls preload="metadata" src={joinResult.audio_url} className="w-full h-10" />
+            <div className="flex items-center gap-3 flex-wrap">
+              <a href={joinResult.audio_url} download={`joined-${joinResult.audio_r2_key?.split("/").pop() || `output.${joinFormat}`}`} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">⬇ Download {joinFormat.toUpperCase()}</a>
+              <span className="text-[11px] text-gray-500 font-mono truncate max-w-full">{joinResult.audio_r2_key || "joined output"}</span>
+            </div>
+          </div>
+        )}
       </section>
 
     </div>

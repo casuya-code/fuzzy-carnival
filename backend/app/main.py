@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import (
@@ -116,6 +117,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def static_cache_control(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    # Generated output files are content-addressed/timestamped and immutable.
+    if request.method in {"GET", "HEAD"} and path.startswith("/static/") and response.status_code == 200:
+        response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+    return response
 
 app.include_router(auth.router)
 app.include_router(observability.router)

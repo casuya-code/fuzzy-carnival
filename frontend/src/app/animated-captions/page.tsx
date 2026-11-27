@@ -1012,7 +1012,7 @@ function AnimatedCaptionsPageInner() {
 
                   <div className="space-y-2">
 
-                    <video controls src={selectedVideo.video_url} className="w-full rounded-lg bg-black max-h-64" />
+                    <video controls preload="metadata" src={selectedVideo.video_url} className="w-full rounded-lg bg-black max-h-64" />
 
                     <p className="text-[11px] font-mono text-gray-500 truncate">{selectedVideo.video_r2_key || selectedVideo.video_url}</p>
 
@@ -1791,7 +1791,7 @@ function AnimatedCaptionsPageInner() {
 
             )}
 
-            <video controls src={result.video_url} className="w-full rounded-lg bg-black max-h-[520px]" />
+            <video controls preload="metadata" src={result.video_url} className="w-full rounded-lg bg-black max-h-[520px]" />
 
             <div className="flex items-center gap-3 flex-wrap">
 

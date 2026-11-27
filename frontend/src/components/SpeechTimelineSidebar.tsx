@@ -298,6 +298,7 @@ export default function SpeechTimelineSidebar({
           <audio
             ref={audioRef}
             className="hidden"
+            preload="metadata"
             onLoadedMetadata={() => { loadedSrcRef.current = audioUrl || null; }}
             onEnded={() => setPlayingId(null)}
           />
