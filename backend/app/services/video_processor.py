@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 from app.services.job_context import check_cancelled, run_ffmpeg
@@ -47,7 +48,13 @@ from app.services.video_transitions import (
     transition_events,
 )
 
-__all__ = ["get_duration", "trim_and_zoom_clip", "stitch_clips_with_audio", "stitch_silent_clips"]
+__all__ = [
+    "get_duration",
+    "trim_and_zoom_clip",
+    "stitch_clips_with_audio",
+    "stitch_clips_with_clip_audio",
+    "stitch_silent_clips",
+]
 
 PREVIEW_WIDTH = 480
 _PREVIEW_PRESET = "ultrafast"
@@ -61,6 +68,26 @@ def preview_dims(aspect_ratio: str) -> tuple[int, int]:
     return PREVIEW_WIDTH, max(2, height)
 
 
+def _has_audio_stream(path: str) -> bool:
+    """Return True when the file has at least one audio stream."""
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=codec_type",
+                "-of", "csv=p=0",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return bool(probe.stdout.strip())
+    except Exception:
+        return False
+
+
 def trim_and_zoom_clip(
     input_path: str,
     output_path: str,
@@ -70,11 +97,16 @@ def trim_and_zoom_clip(
     zoom_expr: str | None = None,
     overlay: str = DEFAULT_EFFECT_OVERLAY,
     preview: bool = False,
+    keep_audio: bool = False,
 ) -> str:
     """
     1. Cuts off the last trim_end_sec to remove AI video warping (via -t, not -sseof).
     2. Applies a smooth 2.5-second dynamic punch-in zoom for retention.
     3. Optionally applies a visual effect overlay.
+
+    When ``keep_audio`` is True the clip's own audio is trimmed and preserved
+    (silent audio is generated when the source has no audio stream) so clips can
+    be joined without a separate unified audio track.
     """
     check_cancelled()
     raw_duration = get_duration(input_path)
@@ -108,9 +140,30 @@ def trim_and_zoom_clip(
     cmd = [
         "ffmpeg", "-nostdin", "-y",
         "-i", input_path,
+    ]
+    has_audio = keep_audio and _has_audio_stream(input_path)
+    if keep_audio and not has_audio:
+        cmd += [
+            "-f", "lavfi", "-t", f"{clean_duration:.3f}",
+            "-i", f"anullsrc=channel_layout=stereo:sample_rate={SOCIAL_AUDIO_RATE}",
+        ]
+
+    cmd += [
         "-t", f"{clean_duration:.3f}",
         "-vf", vf_filter,
-        "-an",  # Strip silent AI video audio track
+        "-map", "0:v:0",
+    ]
+    if keep_audio:
+        cmd += ["-map", "1:a:0" if not has_audio else "0:a:0?"]
+        cmd += [
+            "-c:a", "aac",
+            "-b:a", SOCIAL_AUDIO_BITRATE,
+            "-ar", str(SOCIAL_AUDIO_RATE),
+        ]
+    else:
+        cmd += ["-an"]  # Strip silent AI video audio track
+
+    cmd += [
         "-c:v", "libx264",
         "-preset", _PREVIEW_PRESET if preview else SOCIAL_VIDEO_PRESET,
         "-crf", _PREVIEW_CRF if preview else str(SOCIAL_VIDEO_CRF),
@@ -201,9 +254,111 @@ def _stitch_video_silent(
     return final_output_path
 
 
+def _stitch_video_with_clip_audio(
+    processed_clips: list[str],
+    final_output_path: str,
+    transition: str = DEFAULT_TRANSITION,
+    transition_duration_sec: float = DEFAULT_TRANSITION_DURATION_SEC,
+    transitions: list[str] | None = None,
+    overlay: str = DEFAULT_EFFECT_OVERLAY,
+) -> str:
+    """Join processed clips with xfade video and acrossfade audio (keeps clip audio)."""
+    if not processed_clips:
+        raise ValueError("At least one processed clip is required")
+    check_cancelled()
+
+    overlay = normalize_effect_overlay(overlay)
+    overlay_fx = effect_overlay_filter(overlay)
+    base = normalize_transition(transition)
+    gaps = [normalize_transition(t) for t in transitions] if transitions else [base] * (len(processed_clips) - 1)
+
+    durations = [get_duration(clip) for clip in processed_clips]
+    audio_present = [_has_audio_stream(c) for c in processed_clips]
+    command_inputs: list[str] = []
+    audio_map: list[str] = []
+    for i, clip in enumerate(processed_clips):
+        command_inputs += ["-i", clip]
+        if audio_present[i]:
+            audio_map.append(f"{i}:a:0")
+        else:
+            # Insert a silent audio source; its input index is len(processed_clips) + n_silent.
+            silent_idx = len(processed_clips) + sum(1 for p in audio_present[:i] if not p)
+            audio_map.append(f"{silent_idx}:a:0")
+    # Append silent sources for clips missing audio.
+    for i, present in enumerate(audio_present):
+        if not present:
+            command_inputs += [
+                "-f", "lavfi", "-t", f"{durations[i]:.3f}",
+                "-i", f"anullsrc=channel_layout=stereo:sample_rate={SOCIAL_AUDIO_RATE}",
+            ]
+
+    if len(processed_clips) == 1:
+        vf = f"{overlay_fx},format=yuv420p" if overlay_fx else None
+        cmd = ["ffmpeg", "-nostdin", "-y", *command_inputs]
+        if vf:
+            cmd += ["-vf", vf, "-c:v", "libx264", "-preset", SOCIAL_VIDEO_PRESET,
+                    "-crf", str(SOCIAL_VIDEO_CRF), "-maxrate", SOCIAL_MAXRATE,
+                    "-bufsize", SOCIAL_BUFSIZE, "-pix_fmt", "yuv420p",
+                    "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+        else:
+            cmd += ["-c:v", "copy"]
+        cmd += [
+            "-map", "0:v:0", "-map", audio_map[0],
+            "-c:a", "aac", "-b:a", SOCIAL_AUDIO_BITRATE, "-ar", str(SOCIAL_AUDIO_RATE),
+            "-movflags", "+faststart", final_output_path,
+        ]
+        run_ffmpeg(cmd)
+        return final_output_path
+
+    v_graph, v_label, _total = build_xfade_filtergraph(
+        durations=durations, transitions=gaps, duration_sec=transition_duration_sec,
+    )
+    # Build acrossfade using the actual audio input mapping.
+    events = transition_events(durations, gaps, transition_duration_sec)
+    a_parts: list[str] = []
+    current_a = f"[{audio_map[0]}]"
+    for i, (_name, _offset, overlap) in enumerate(events, 1):
+        out_label = f"ax{i}"
+        a_parts.append(
+            f"{current_a}[{audio_map[i]}]acrossfade=d={overlap:.3f}:c1=tri:c2=tri[{out_label}]"
+        )
+        current_a = f"[{out_label}]"
+    a_graph = ";".join(a_parts)
+    a_label = current_a.strip("[]")
+
+    out_v = v_label
+    if overlay_fx:
+        v_graph = f"{v_graph};[{v_label}]{overlay_fx},format=yuv420p[vfx]"
+        out_v = "vfx"
+
+    filtergraph = f"{v_graph};{a_graph}"
+    run_ffmpeg([
+        "ffmpeg", "-nostdin", "-y",
+        *command_inputs,
+        "-filter_complex", filtergraph,
+        "-map", f"[{out_v}]",
+        "-map", f"[{a_label}]",
+        "-c:v", "libx264",
+        "-preset", SOCIAL_VIDEO_PRESET,
+        "-crf", str(SOCIAL_VIDEO_CRF),
+        "-maxrate", SOCIAL_MAXRATE,
+        "-bufsize", SOCIAL_BUFSIZE,
+        "-pix_fmt", "yuv420p",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-c:a", "aac",
+        "-b:a", SOCIAL_AUDIO_BITRATE,
+        "-ar", str(SOCIAL_AUDIO_RATE),
+        "-movflags", "+faststart",
+        final_output_path,
+    ])
+    return final_output_path
+
+
 def stitch_clips_with_audio(
     processed_clips: list[str],
-    unified_audio_path: str,
+    unified_audio_path: str | None,
     final_output_path: str,
     ass_path: str | None = None,
     aspect_ratio: str = DEFAULT_ASPECT_RATIO,
@@ -223,30 +378,45 @@ def stitch_clips_with_audio(
     preview: bool = False,
 ) -> str:
     """
-    Joins trimmed & zoomed clips with xfade transitions, then attaches audio.
-    Loops the video sequence if the narration is slightly longer than total clips.
+    Join trimmed & zoomed clips with xfade transitions, then attach audio.
 
-    If ass_path is provided, the captions are burned in the SAME final pass
-    (libass via -vf) instead of re-encoding the video a second time afterwards.
+    When ``unified_audio_path`` is provided, the video is looped to match that
+    audio and ``-shortest`` ends at the audio. When it is ``None``, the clips'
+    own audio is preserved (stitched with acrossfades) and no external audio is
+    mixed in.
+
+    If ass_path is provided, captions are burned in the same final encode pass.
     """
     check_cancelled()
     work_dir = str(Path(final_output_path).parent)
     sfx_path = ""
+    keep_clip_audio = not unified_audio_path
 
-    # Step 1: Join clips with selected transitions into one silent MP4.
-    stitched_silent = str(Path(final_output_path).with_name("stitched_silent.mp4"))
-    try:
-        _stitch_video_silent(
-            processed_clips,
-            stitched_silent,
-            transition=transition,
-            transition_duration_sec=transition_duration_sec,
-            transitions=transitions,
-            overlay=overlay,
+    stitched_path = str(
+        Path(final_output_path).with_name(
+            "stitched_with_audio.mp4" if keep_clip_audio else "stitched_silent.mp4"
         )
+    )
+    try:
+        if keep_clip_audio:
+            _stitch_video_with_clip_audio(
+                processed_clips,
+                stitched_path,
+                transition=transition,
+                transition_duration_sec=transition_duration_sec,
+                transitions=transitions,
+                overlay=overlay,
+            )
+        else:
+            _stitch_video_silent(
+                processed_clips,
+                stitched_path,
+                transition=transition,
+                transition_duration_sec=transition_duration_sec,
+                transitions=transitions,
+                overlay=overlay,
+            )
 
-        # Step 2: Combine stitched video, local overlay, and unified audio in one pass.
-        # A quick preview deliberately bypasses 2K upscaling and uses low-res output.
         upscale_dims = None if preview else _upscale_dims(aspect_ratio, upscale_2k)
         preview_frame = preview_dims(aspect_ratio) if preview else None
         use_overlay = bool(overlay_image_path and Path(overlay_image_path).is_file())
@@ -259,15 +429,12 @@ def stitch_clips_with_audio(
         elif upscale_dims:
             vf_parts.append(f"scale={upscale_dims[0]}:{upscale_dims[1]}:flags=lanczos")
         vf_parts.append("format=yuv420p")
-        # The video input uses -stream_loop -1 below. Stream-copying a looped
-        # MP4 produces broken timestamps, so always re-encode (H30).
-        must_encode_video = True
 
-        sfx_path = str(Path(final_output_path).with_name("transition_sfx.wav"))
         sfx_kind = normalize_sfx(transition_sfx)
-        sfx_level = normalize_sfx_level(transition_sfx_level)
+        sfx_level_n = normalize_sfx_level(transition_sfx_level)
         use_sfx = False
-        if sfx_kind != "off" and sfx_level > 0 and len(processed_clips) > 1:
+        sfx_path = str(Path(final_output_path).with_name("transition_sfx.wav"))
+        if sfx_kind != "off" and sfx_level_n > 0 and len(processed_clips) > 1:
             gaps = (
                 [normalize_transition(t) for t in transitions]
                 if transitions
@@ -280,92 +447,98 @@ def stitch_clips_with_audio(
                 gaps,
                 transition_duration_sec,
                 sfx_kind,
-                sfx_level,
-                get_duration(stitched_silent),
+                sfx_level_n,
+                get_duration(stitched_path),
             )
 
-        # Inputs: 0=video, 1=voice/music, 2=overlay image, 3=SFX bed.
-        cmd = [
-            "ffmpeg", "-nostdin", "-y",
-            "-stream_loop", "-1", "-i", stitched_silent,
-            "-i", unified_audio_path,
-        ]
+        # Inputs: 0=stitched video (+clip audio when keep_clip_audio),
+        # unified audio when provided, then overlay image, then SFX.
+        cmd = ["ffmpeg", "-nostdin", "-y"]
+        if keep_clip_audio:
+            cmd += ["-i", stitched_path]
+        else:
+            cmd += ["-stream_loop", "-1", "-i", stitched_path, "-i", unified_audio_path]
         if use_overlay:
             cmd += ["-loop", "1", "-framerate", "30", "-i", overlay_image_path]
         if use_sfx:
             cmd += ["-stream_loop", "-1", "-i", sfx_path]
 
-        if must_encode_video:
-            cmd += [
-                "-c:v", "libx264",
-                "-preset", _PREVIEW_PRESET if preview else SOCIAL_VIDEO_PRESET,
-                "-crf", _PREVIEW_CRF if preview else str(SOCIAL_VIDEO_CRF),
-                "-maxrate", SOCIAL_MAXRATE,
-                "-bufsize", SOCIAL_BUFSIZE,
-                "-pix_fmt", "yuv420p",
-                "-colorspace", "bt709",
-                "-color_primaries", "bt709",
-                "-color_trc", "bt709",
-            ]
-        else:
-            cmd += ["-c:v", "copy"]
+        cmd += [
+            "-c:v", "libx264",
+            "-preset", _PREVIEW_PRESET if preview else SOCIAL_VIDEO_PRESET,
+            "-crf", _PREVIEW_CRF if preview else str(SOCIAL_VIDEO_CRF),
+            "-maxrate", SOCIAL_MAXRATE,
+            "-bufsize", SOCIAL_BUFSIZE,
+            "-pix_fmt", "yuv420p",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+        ]
 
         filter_parts: list[str] = []
-        video_label = "0:v:0"
-        if must_encode_video:
-            filter_parts.append(f"[0:v]{','.join(vf_parts)}[vbase]")
-            video_label = "[vbase]"
+        filter_parts.append(f"[0:v]{','.join(vf_parts)}[vbase]")
+        video_label = "[vbase]"
 
-        if use_overlay:
+        overlay_input = (1 if keep_clip_audio else 2) if use_overlay else None
+        sfx_input = (1 if keep_clip_audio else 2) + (1 if use_overlay else 0)
+
+        if use_overlay and overlay_input is not None:
             zone = SAFE_ZONES.get(aspect_ratio, SAFE_ZONES[DEFAULT_ASPECT_RATIO])
             frame_w, frame_h = preview_frame or upscale_dims or (zone["w"], zone["h"])
             image_filter, placement_filter = build_overlay_filters(
                 overlay_position, overlay_size, overlay_opacity, frame_w, frame_h
             )
-            filter_parts.append(f"[2:v]{image_filter}")
+            filter_parts.append(f"[{overlay_input}:v]{image_filter}")
             filter_parts.append(placement_filter)
             filter_parts.append("[vout]format=yuv420p[vfinal]")
             video_label = "[vfinal]"
 
-        sfx_index = 3 if use_overlay else 2
+        audio_src = "0:a:0" if keep_clip_audio else "1:a:0"
         if use_sfx:
             audio_filter = (
-                f"[1:a:0][{sfx_index}:a:0]amix=inputs=2:duration=first:"
+                f"[{audio_src}][{sfx_input}:a:0]amix=inputs=2:duration=first:"
                 "dropout_transition=0:normalize=0"
             )
             if loudnorm:
                 audio_filter += ",loudnorm=I=-16:TP=-1.5:LRA=11"
             filter_parts.append(f"{audio_filter}[aout]")
             audio_label = "[aout]"
-        elif loudnorm and filter_parts:
-            filter_parts.append("[1:a:0]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
+        elif loudnorm:
+            filter_parts.append(f"[{audio_src}]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
             audio_label = "[aout]"
         else:
-            audio_label = "1:a:0"
+            audio_label = audio_src
 
-        if filter_parts:
-            cmd += ["-filter_complex", ";".join(filter_parts)]
+        cmd += ["-filter_complex", ";".join(filter_parts)]
         cmd += ["-map", video_label, "-map", audio_label]
-        if not filter_parts and loudnorm:
-            cmd += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
 
         cmd += [
             "-c:a", "aac",
             "-b:a", SOCIAL_AUDIO_BITRATE,
             "-ar", str(SOCIAL_AUDIO_RATE),
             "-movflags", "+faststart",
-            "-shortest",  # Stops when audio (voiceover + outro) finishes
-            final_output_path,
         ]
+        if not keep_clip_audio:
+            cmd += ["-shortest"]  # Stops when unified audio finishes
+        cmd += [final_output_path]
         run_ffmpeg(cmd, cwd=work_dir)
     finally:
-        for temp in (stitched_silent, sfx_path):
+        for temp in (stitched_path, sfx_path):
             try:
                 Path(temp).unlink(missing_ok=True)
             except Exception:
                 pass
 
     return final_output_path
+
+
+def stitch_clips_with_clip_audio(
+    processed_clips: list[str],
+    final_output_path: str,
+    **kwargs,
+) -> str:
+    """Join clips and preserve their own audio (no unified external audio track)."""
+    return stitch_clips_with_audio(processed_clips, None, final_output_path, **kwargs)
 
 
 def stitch_silent_clips(

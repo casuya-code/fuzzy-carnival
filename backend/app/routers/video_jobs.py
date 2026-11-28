@@ -289,8 +289,8 @@ async def submit_process(
 ):
     if not _media_tools_available():
         raise HTTPException(status_code=503, detail="FFmpeg/ffprobe required for video processing")
-    if not clips or (audio is None and not audio_r2_key):
-        raise HTTPException(status_code=400, detail="Clips and an audio track are required")
+    if not clips:
+        raise HTTPException(status_code=400, detail="At least one video clip is required")
     _validate_common(
         aspect_ratio, len(clips) - 1, transition, transition_duration_sec,
         transitions, lower_third, font_path,
@@ -354,6 +354,7 @@ async def submit_batch(
     audio: Optional[UploadFile] = File(None),
     audio_r2_key: Optional[str] = Form(None),
     bpm: Optional[float] = Form(None),
+    keep_audio: bool = Form(False),
     transition: str = Form(DEFAULT_TRANSITION),
     transition_duration_sec: float = Form(DEFAULT_TRANSITION_DURATION_SEC),
     transitions: Optional[str] = Form(None),
@@ -377,6 +378,7 @@ async def submit_batch(
             language=language,
             audio_r2_key=audio_r2_key,
             bpm=bpm,
+            keep_audio=keep_audio,
             transition=transition,
             transition_duration_sec=transition_duration_sec,
             transitions=transitions,
@@ -421,8 +423,7 @@ async def submit_finalize(
 ):
     if not _media_tools_available():
         raise HTTPException(status_code=503, detail="FFmpeg/ffprobe required for video processing")
-    if audio is None and not audio_r2_key:
-        raise HTTPException(status_code=400, detail="Provide an audio track")
+    # Audio is optional; without it the segments' own audio is preserved.
     # Shared parser: JSON array (keys may contain commas) with CSV fallback (H29).
     segments = _parse_segment_keys(video_r2_keys)
     if not segments:

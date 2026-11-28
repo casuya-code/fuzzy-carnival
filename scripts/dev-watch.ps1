@@ -47,10 +47,18 @@ function Get-PortOwner([int]$port) {
 
 function Stop-PortProcess([int]$port) {
     $ownerPid = Get-PortOwner $port
-    if ($ownerPid -gt 0) {
-        taskkill /PID $ownerPid /T /F | Out-Null
-        Start-Sleep -Milliseconds 800
+    if ($ownerPid -eq 0) { return }
+
+    taskkill /PID $ownerPid /T /F | Out-Null
+    # Uvicorn's reloader exits after its child, so verify the port is actually
+    # free before starting a replacement. A silent failure leaves two servers
+    # competing for the port, and the old code keeps answering requests.
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Milliseconds 250
+        if ((Get-PortOwner $port) -eq 0) { return }
     }
+    Write-WatchLog "failed to stop pid=$ownerPid on port=$port"
+    throw "Failed to stop process $ownerPid on port $port"
 }
 
 function Start-Backend {

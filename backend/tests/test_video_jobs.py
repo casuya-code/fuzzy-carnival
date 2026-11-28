@@ -48,7 +48,10 @@ def fake_render(monkeypatch):
 
     def stitch(paths, *rest, **kwargs):
         final = rest[-1] if rest else str(Path(paths[0]).with_name("final.mp4"))
-        captured["stitch"] = {"paths": list(paths), **kwargs}
+        audio_path = rest[0] if len(rest) >= 2 else None
+        call = {"paths": list(paths), "audio_path": audio_path, **kwargs}
+        captured["stitch"] = call
+        captured.setdefault("stitch_calls", []).append(call)
         Path(final).write_bytes(b"final")
         return final
 
@@ -56,18 +59,32 @@ def fake_render(monkeypatch):
         captured["upload_key"] = key
         return f"https://example.test/{key}"
 
+    def download(key, dest=None):
+        if dest is None:
+            return f"https://example.test/{key}"
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest).write_bytes(b"segment")
+        return str(dest)
+
     monkeypatch.setattr(video, "trim_and_zoom_clip", trim)
     monkeypatch.setattr(video, "stitch_clips_with_audio", stitch)
+    monkeypatch.setattr(video, "stitch_clips_with_clip_audio", stitch)
     monkeypatch.setattr(video, "stitch_silent_clips", stitch)
     monkeypatch.setattr(video, "upload_output", upload)
+    monkeypatch.setattr(video, "download_reference", download)
     monkeypatch.setattr(video, "get_duration", lambda _: 1.0)
     return captured, store
 
 
-def _files():
+def _clip_files():
     return [
         ("clips", ("a.mp4", b"a", "video/mp4")),
         ("clips", ("b.mp4", b"b", "video/mp4")),
+    ]
+
+
+def _files():
+    return _clip_files() + [
         ("audio", ("voice.mp3", b"v", "audio/mpeg")),
     ]
 
@@ -137,6 +154,53 @@ def test_batch_job_returns_reusable_intermediate(client, fake_render, auth_heade
     assert body["result"]["intermediate"] is True
     assert body["result"]["video_r2_key"]
     assert captured["trim"][0]["preview"] is True
+
+
+def test_process_job_allows_clips_without_unified_audio(client, fake_render, auth_headers):
+    captured, _ = fake_render
+    r = client.post(
+        "/api/v1/video/jobs/process",
+        files=_clip_files(),
+        data={"aspect_ratio": "9:16", "transition": "fade"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 202, r.text
+    body = _wait(client, r.json()["job_id"], auth_headers)
+    assert body["status"] == "succeeded", body
+    assert all(call["keep_audio"] is True for call in captured["trim"])
+    assert captured["stitch"]["audio_path"] is None
+
+
+def test_batch_job_keep_audio_preserves_clip_audio(client, fake_render, auth_headers):
+    captured, _ = fake_render
+    r = client.post(
+        "/api/v1/video/jobs/process-batch",
+        files=_clip_files(),
+        data={
+            "aspect_ratio": "9:16",
+            "transition": "fade",
+            "keep_audio": "true",
+        },
+        headers=auth_headers,
+    )
+    assert r.status_code == 202, r.text
+    body = _wait(client, r.json()["job_id"], auth_headers)
+    assert body["status"] == "succeeded", body
+    assert all(call["keep_audio"] is True for call in captured["trim"])
+    assert captured["stitch"]["audio_path"] is None
+
+
+def test_finalize_job_allows_segments_without_unified_audio(client, fake_render, auth_headers):
+    captured, _ = fake_render
+    r = client.post(
+        "/api/v1/video/jobs/finalize",
+        data={"video_r2_keys": '["a.mp4", "b.mp4"]', "transition": "fade"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 202, r.text
+    body = _wait(client, r.json()["job_id"], auth_headers)
+    assert body["status"] == "succeeded", body
+    assert captured["stitch"]["audio_path"] is None
 
 
 def test_invalid_options_fail_before_job_creation(client, fake_render, auth_headers):

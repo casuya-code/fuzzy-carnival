@@ -54,8 +54,14 @@ from app.services.video_transitions import (
     MIN_TRANSITION_DURATION_SEC,
     normalize_transition,
     parse_transitions,
+    transition_events,
 )
-from app.services.video_processor import stitch_clips_with_audio, stitch_silent_clips, trim_and_zoom_clip
+from app.services.video_processor import (
+    stitch_clips_with_audio,
+    stitch_clips_with_clip_audio,
+    stitch_silent_clips,
+    trim_and_zoom_clip,
+)
 from app.auth import require_user as require_api_key
 from app.rate_limit import rate_limit
 from app.services.job_context import JobCancelled, check_cancelled, report_progress
@@ -227,14 +233,13 @@ async def process_video(
     """Trim tail warp, apply 2.5s retention zoom to each clip, stitch, and attach unified audio.
 
     When script_text is supplied, animated word-by-word captions are burned in
-    the same final encode pass (no second video encode).
+    the same final encode pass (no second video encode). If no unified audio is
+    provided, the clips' own audio is preserved and joined.
     """
     if not _media_tools_available():
         raise HTTPException(status_code=503, detail="FFmpeg/ffprobe required for video processing")
     if not clips:
         raise HTTPException(status_code=400, detail="At least one video clip is required")
-    if audio is None and not audio_r2_key:
-        raise HTTPException(status_code=400, detail="Provide an audio track (upload or audio_r2_key)")
     if aspect_ratio not in SAFE_ZONES:
         allowed = ", ".join(f"'{k}'" for k in SAFE_ZONES)
         raise HTTPException(status_code=400, detail=f"aspect_ratio must be one of {allowed}")
@@ -264,13 +269,14 @@ async def process_video(
             a_suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
             audio_path = str(work_dir / f"audio_{job_id}{a_suffix}")
             copy_upload_capped(audio, Path(audio_path))
-        else:
+        elif audio_r2_key:
             # Download into the job dir so cleanup is automatic
             audio_path = download_reference(
                 audio_r2_key,  # type: ignore[arg-type]
                 dest=work_dir / f"audio{Path(audio_r2_key).suffix or '.mp3'}",  # type: ignore[arg-type]
             )
 
+        keep_clip_audio = audio_path is None
         overlay_path = _save_overlay_upload(overlay_image, work_dir, job_id)
 
         # Best-effort BPM detection for beat-synced zoompan (falls back to static).
@@ -293,6 +299,7 @@ async def process_video(
                     zoom_expr=zoom_expr,
                     overlay="none",  # applied once at stitch time (H26)
                     preview=preview,
+                    keep_audio=keep_clip_audio,
                 )
             finally:
                 Path(raw_path).unlink(missing_ok=True)
@@ -317,7 +324,12 @@ async def process_video(
                 if outro_sec is not None
                 else DEFAULT_OUTRO_SEC
             )
-            audio_duration = get_duration(audio_path)
+            if audio_path:
+                audio_duration = get_duration(audio_path)
+            else:
+                clip_durations = [get_duration(p) for p in processed_paths]
+                events = transition_events(clip_durations, gaps, transition_duration_sec) if len(clip_durations) > 1 else []
+                audio_duration = max(0.5, sum(clip_durations) - sum(e[2] for e in events))
             intro, voice_duration = _caption_window(audio_duration, intro, outro)
             ass_path = str(work_dir / "captions.ass")
             generate_word_by_word_ass(
@@ -415,19 +427,26 @@ async def process_video_batch(
     audio: Optional[UploadFile] = File(None),
     audio_r2_key: Optional[str] = Form(None),
     bpm: Optional[float] = Form(None),
+    keep_audio: bool = Form(False),
     transition: str = Form(DEFAULT_TRANSITION),
     transition_duration_sec: float = Form(DEFAULT_TRANSITION_DURATION_SEC),
     transitions: Optional[str] = Form(None),
     overlay: str = Form(DEFAULT_EFFECT_OVERLAY),
     preview: bool = Form(False),
 ):
-    """Process a batch of clips (trim + zoom) and return one stitched silent intermediate video.
+    """Process a batch of clips (trim + zoom) and return one stitched intermediate video.
 
     Intended for large jobs: frontend can send clips in smaller batches, then call /finalize
     with the returned intermediate keys and the audio track. Pass ``audio``, ``audio_r2_key``
     or ``bpm`` to apply the same beat-synced zoom used by /process; without them the static
-    retention zoom is used (backwards compatible with existing batch callers).
+    retention zoom is used. Set ``keep_audio`` to preserve and stitch the clips' own audio
+    when no unified audio track will be supplied at finalize.
     """
+    # Direct calls (e.g. video_jobs) bypass FastAPI Form resolution.
+    if not isinstance(keep_audio, bool):
+        keep_audio = bool(getattr(keep_audio, "default", False))
+    if not isinstance(preview, bool):
+        preview = bool(getattr(preview, "default", False))
     if not _media_tools_available():
         raise HTTPException(status_code=503, detail="FFmpeg/ffprobe required for video processing")
     if not clips:
@@ -478,6 +497,7 @@ async def process_video_batch(
                     zoom_expr=zoom_expr,
                     overlay="none",  # applied once at stitch time (H26)
                     preview=preview,
+                    keep_audio=keep_audio,
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed processing clip {i + 1}: {e}")
@@ -487,14 +507,24 @@ async def process_video_batch(
 
         check_cancelled()
         report_progress("stitching", 75)
-        stitch_silent_clips(
-            processed_paths,
-            batch_path,
-            transition=transition,
-            transition_duration_sec=transition_duration_sec,
-            transitions=gaps,
-            overlay=overlay_fx,
-        )
+        if keep_audio:
+            stitch_clips_with_clip_audio(
+                processed_paths,
+                batch_path,
+                transition=transition,
+                transition_duration_sec=transition_duration_sec,
+                transitions=gaps,
+                overlay=overlay_fx,
+            )
+        else:
+            stitch_silent_clips(
+                processed_paths,
+                batch_path,
+                transition=transition,
+                transition_duration_sec=transition_duration_sec,
+                transitions=gaps,
+                overlay=overlay_fx,
+            )
 
         check_cancelled()
         report_progress("uploading", 92)
@@ -555,11 +585,12 @@ async def finalize_video(
     lower_third_duration_sec: float = Form(5.0),
     font_path: Optional[str] = Form(None),
 ):
-    """Finalize one or more processed/intermediate video segments with unified audio (and optional captions)."""
+    """Finalize one or more processed/intermediate video segments with unified audio (and optional captions).
+
+    If no unified audio is provided, the segments' own audio is preserved.
+    """
     if not _media_tools_available():
         raise HTTPException(status_code=503, detail="FFmpeg/ffprobe required for video processing")
-    if audio is None and not audio_r2_key:
-        raise HTTPException(status_code=400, detail="Provide an audio track (upload or audio_r2_key)")
     if aspect_ratio not in SAFE_ZONES:
         allowed = ", ".join(f"'{k}'" for k in SAFE_ZONES)
         raise HTTPException(status_code=400, detail=f"aspect_ratio must be one of {allowed}")
@@ -603,7 +634,7 @@ async def finalize_video(
             a_suffix = Path(audio.filename or "audio.mp3").suffix or ".mp3"
             audio_path = str(work_dir / f"audio_{job_id}{a_suffix}")
             copy_upload_capped(audio, Path(audio_path))
-        else:
+        elif audio_r2_key:
             audio_path = download_reference(
                 audio_r2_key,  # type: ignore[arg-type]
                 dest=work_dir / f"audio{Path(audio_r2_key).suffix or '.mp3'}",  # type: ignore[arg-type]
@@ -635,7 +666,12 @@ async def finalize_video(
                 if outro_sec is not None
                 else DEFAULT_OUTRO_SEC
             )
-            audio_duration = get_duration(audio_path)
+            if audio_path:
+                audio_duration = get_duration(audio_path)
+            else:
+                clip_durations = [get_duration(p) for p in segment_paths]
+                events = transition_events(clip_durations, gaps, transition_duration_sec) if len(clip_durations) > 1 else []
+                audio_duration = max(0.5, sum(clip_durations) - sum(e[2] for e in events))
             intro, voice_duration = _caption_window(audio_duration, intro, outro)
             ass_path = str(work_dir / "captions.ass")
             generate_word_by_word_ass(

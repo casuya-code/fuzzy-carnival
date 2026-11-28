@@ -656,6 +656,8 @@ export async function processVideoBatch(payload: {
   audio?: File | null;
   audio_r2_key?: string | null;
   bpm?: number | null;
+  /** Preserve each clip's own audio when no unified audio track will be used. */
+  keep_audio?: boolean;
   transition?: string;
   transition_duration_sec?: number;
   transitions?: string[];
@@ -671,6 +673,7 @@ export async function processVideoBatch(payload: {
   if (payload.audio) fd.append("audio", payload.audio, payload.audio.name);
   if (payload.audio_r2_key) fd.append("audio_r2_key", payload.audio_r2_key);
   if (payload.bpm != null) fd.append("bpm", String(payload.bpm));
+  if (payload.keep_audio) fd.append("keep_audio", "true");
   if (payload.transition) fd.append("transition", payload.transition);
   if (payload.transition_duration_sec != null) fd.append("transition_duration_sec", String(payload.transition_duration_sec));
   if (payload.transitions) fd.append("transitions", JSON.stringify(payload.transitions));

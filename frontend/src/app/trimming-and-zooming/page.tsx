@@ -138,7 +138,7 @@ function TrimmingAndZoomingPageInner() {
 
   const [overlayEffect, setOverlayEffect] = useState("none");
 
-  const [audioMode, setAudioMode] = useState<"upload" | "history">("upload");
+  const [audioMode, setAudioMode] = useState<"upload" | "history" | "none">("none");
 
   const [audioFile, setAudioFile] = useState<File | null>(null);
 
@@ -458,15 +458,15 @@ function TrimmingAndZoomingPageInner() {
 
     if (audioMode === "upload") {
 
-      if (!audioFile) { setError("Upload or select a unified audio track."); return; }
+      if (!audioFile) { setError("Upload or select an audio track, or choose \"Clip audio\" to keep clip audio."); return; }
 
       audioPayload.file = audioFile;
 
-    } else {
+    } else if (audioMode === "history") {
 
       const sel = audioHistory.find((a) => a.audio_url === selectedAudioUrl);
 
-      if (!sel) { setError("Select an audio track from history."); return; }
+      if (!sel) { setError("Select an audio track from history, or choose \"Clip audio\" to keep clip audio."); return; }
 
       audioPayload.key = sel.audio_r2_key;
 
@@ -527,6 +527,8 @@ function TrimmingAndZoomingPageInner() {
               audio: audioPayload.file,
 
               audio_r2_key: audioPayload.key,
+
+              keep_audio: audioMode === "none",
 
               transition: defaultTransition,
 
@@ -614,7 +616,7 @@ function TrimmingAndZoomingPageInner() {
 
         );
 
-        setProgress(`Finalizing video (${batchKeys.length} batches) with audio…`);
+        setProgress(`Finalizing video (${batchKeys.length} batches)${audioMode === "none" ? "" : " with audio"}…`);
 
         data = await runRender("finalize", {
 
@@ -662,7 +664,7 @@ function TrimmingAndZoomingPageInner() {
 
       } else {
 
-        setProgress("Processing clips and attaching audio…");
+        setProgress(audioMode === "none" ? "Processing and joining clips…" : "Processing clips and attaching audio…");
 
         data = await runRender("process", {
 
@@ -1284,7 +1286,7 @@ function TrimmingAndZoomingPageInner() {
 
           <div className="flex items-center justify-between gap-2 border-b pb-2">
 
-            <h2 className="text-base sm:text-lg font-semibold">④ Unified Audio &amp; Parameters</h2>
+            <h2 className="text-base sm:text-lg font-semibold">④ Audio &amp; Parameters</h2>
 
           </div>
 
@@ -1448,19 +1450,27 @@ function TrimmingAndZoomingPageInner() {
 
           <div className="rounded-lg border p-3 space-y-3">
 
-            <div className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Audio <InfoTip text="One mixed track for voice and music." label="Audio source" /></div>
+            <div className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">Audio <InfoTip text="Optional. Add a unified audio track, or keep the original audio already in your clips." label="Audio source" /></div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
 
-              <button type="button" onClick={() => setAudioMode("upload")} className={`rounded-md border px-3 py-2 text-xs sm:text-sm font-medium ${audioMode === "upload" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 hover:bg-gray-50"}`}>📁 Upload audio</button>
+              <button type="button" onClick={() => setAudioMode("none")} className={`rounded-md border px-3 py-2 text-xs sm:text-sm font-medium ${audioMode === "none" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 hover:bg-gray-50"}`}>🎬 Clip audio</button>
 
-              <button type="button" onClick={() => setAudioMode("history")} className={`rounded-md border px-3 py-2 text-xs sm:text-sm font-medium ${audioMode === "history" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 hover:bg-gray-50"}`}>🕘 From history</button>
+              <button type="button" onClick={() => setAudioMode("upload")} className={`rounded-md border px-3 py-2 text-xs sm:text-sm font-medium ${audioMode === "upload" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 hover:bg-gray-50"}`}>📁 Upload</button>
+
+              <button type="button" onClick={() => setAudioMode("history")} className={`rounded-md border px-3 py-2 text-xs sm:text-sm font-medium ${audioMode === "history" ? "border-gray-800 bg-gray-800 text-white" : "border-gray-200 hover:bg-gray-50"}`}>🕘 History</button>
 
             </div>
 
 
 
-            {audioMode === "upload" ? (
+            {audioMode === "none" ? (
+
+              <p className="text-xs text-gray-500 rounded-md bg-gray-50 border border-gray-100 p-3">
+                No extra audio will be added. The clips’ original audio will be joined with the video. <InfoTip text="Use this when your clips already have the audio you want. Add an audio track only if you want to replace or overlay it with one unified track." label="Clip audio" placement="bottom" />
+              </p>
+
+            ) : audioMode === "upload" ? (
 
               <div className="space-y-2">
 
@@ -1502,7 +1512,11 @@ function TrimmingAndZoomingPageInner() {
 
             )}
 
-            <p className="text-[11px] text-gray-400">Video loops to match audio. <InfoTip text="Output ends with the audio track (-shortest)." label="Video length" placement="bottom" /></p>
+            <p className="text-[11px] text-gray-400">
+              {audioMode === "none"
+                ? <>Output length follows the joined clips. <InfoTip text="Because no unified audio track is attached, the final video keeps the clips’ joined length and audio." label="Video length" placement="bottom" /></>
+                : <>Video loops to match audio. <InfoTip text="Output ends with the audio track (-shortest)." label="Video length" placement="bottom" /></>}
+            </p>
 
           </div>
 
@@ -1522,7 +1536,7 @@ function TrimmingAndZoomingPageInner() {
 
           <span className="text-[11px] font-mono text-gray-400">
 
-            {clips.length > 0 && ((audioMode === "upload" && audioFile) || (audioMode === "history" && selectedAudioUrl)) ? "Ready" : "Not ready"} <InfoTip text="Clips and audio are selected." label="Readiness" placement="bottom" />
+            {clips.length > 0 && (audioMode === "none" || (audioMode === "upload" && audioFile) || (audioMode === "history" && selectedAudioUrl)) ? "Ready" : "Not ready"} <InfoTip text="Clips are selected. Audio is optional - add a track or keep the clips’ original audio." label="Readiness" placement="bottom" />
 
           </span>
 
@@ -1538,7 +1552,7 @@ function TrimmingAndZoomingPageInner() {
 
           onClick={process}
 
-          disabled={processing || clips.length === 0 || (audioMode === "upload" ? !audioFile : !selectedAudioUrl)}
+          disabled={processing || clips.length === 0 || (audioMode === "upload" ? !audioFile : audioMode === "history" ? !selectedAudioUrl : false)}
 
           className="rounded-md bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
 

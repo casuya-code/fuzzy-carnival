@@ -51,14 +51,22 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => {
+  // The first render must be identical on the server and during hydration, so
+  // start signed-out and let the mount effect below apply the cached user.
+  // Reading localStorage in a useState initializer made the sidebar render
+  // "Checking..." on the server and the signed-in controls on the client.
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
     const token = getUserToken();
-    return token ? readCachedUser() : null;
-  });
-  const [loading, setLoading] = useState(() => {
-    const token = getUserToken();
-    return !(token && readCachedUser());
-  });
+    if (!token) return;
+    const cached = readCachedUser();
+    if (cached) {
+      setUser(cached);
+      setLoading(false);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     const token = getUserToken();
